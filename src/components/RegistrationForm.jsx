@@ -68,23 +68,22 @@ const RegistrationForm = () => {
       setLoading(true);
       
       try {
-        // Check if team is already registered
-        const isAlreadyRegistered = await checkTeamAlreadyRegistered(formData.teamNumber);
-        if (isAlreadyRegistered) {
-          setErrors({
-            teamNumber: `Team ${formData.teamNumber} has already registered for a problem statement. Each team can only register once.`
-          });
-          setLoading(false);
-          return;
-        }
-
-        // Encode team data for URL
+        // Immediately navigate with optimistic UI - check registration in background
         const teamDataEncoded = btoa(JSON.stringify(formData));
         navigate(`/problems/${teamDataEncoded}`);
+        
+        // Background check (optional for extra validation)
+        checkTeamAlreadyRegistered(formData.teamNumber).then(isAlreadyRegistered => {
+          if (isAlreadyRegistered) {
+            console.log('Team already registered - will be handled in ProblemStatements component');
+          }
+        }).catch(error => {
+          console.error('Background registration check failed:', error);
+        });
+        
       } catch (error) {
-        console.error('Error checking team registration:', error);
-        alert('Error checking registration status. Please try again.');
-      } finally {
+        console.error('Error during navigation:', error);
+        alert('Error processing request. Please try again.');
         setLoading(false);
       }
     }
@@ -156,8 +155,16 @@ const RegistrationForm = () => {
                 type="submit"
                 className="btn btn-primary w-100"
                 disabled={loading}
+                style={{ minHeight: '40px' }}
               >
-                {loading ? 'Checking...' : 'Continue to Problem Statements'}
+                {loading ? (
+                  <>
+                    <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                    Processing...
+                  </>
+                ) : (
+                  'Continue to Problem Statements'
+                )}
               </button>
             </form>
           </div>

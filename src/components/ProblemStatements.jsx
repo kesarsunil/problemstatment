@@ -46,12 +46,21 @@ const ProblemStatements = () => {
   const [successMessage, setSuccessMessage] = useState('');
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [selectedProblem, setSelectedProblem] = useState(null);
+  const [teamRegistrationChecked, setTeamRegistrationChecked] = useState(false);
+  const [isTeamAlreadyRegistered, setIsTeamAlreadyRegistered] = useState(false);
 
   useEffect(() => {
     try {
       const decodedTeamData = JSON.parse(atob(teamData));
       setTeam(decodedTeamData);
-      fetchProblemCounts();
+      // Fetch both problem counts and check team registration in parallel
+      Promise.all([
+        fetchProblemCounts(),
+        checkTeamAlreadyRegistered(decodedTeamData.teamNumber)
+      ]).then(([, isRegistered]) => {
+        setIsTeamAlreadyRegistered(isRegistered);
+        setTeamRegistrationChecked(true);
+      });
     } catch (error) {
       console.error('Invalid team data');
       navigate('/');
@@ -60,16 +69,23 @@ const ProblemStatements = () => {
 
   const fetchProblemCounts = async () => {
     try {
-      const counts = {};
+      // Fetch all registrations in one query instead of 6 separate queries
+      const allRegistrationsQuery = query(collection(db, 'registrations'));
+      const querySnapshot = await getDocs(allRegistrationsQuery);
       
-      for (const problem of PROBLEM_STATEMENTS) {
-        const q = query(
-          collection(db, 'registrations'),
-          where('problemStatementId', '==', problem.id)
-        );
-        const querySnapshot = await getDocs(q);
-        counts[problem.id] = querySnapshot.size;
-      }
+      const counts = {};
+      // Initialize counts for all problems
+      PROBLEM_STATEMENTS.forEach(problem => {
+        counts[problem.id] = 0;
+      });
+      
+      // Count registrations for each problem
+      querySnapshot.forEach(doc => {
+        const data = doc.data();
+        if (data.problemStatementId && counts.hasOwnProperty(data.problemStatementId)) {
+          counts[data.problemStatementId]++;
+        }
+      });
       
       setProblemCounts(counts);
     } catch (error) {
@@ -96,14 +112,13 @@ const ProblemStatements = () => {
       return; // Already at limit
     }
 
-    // Check if team is already registered
-    const isAlreadyRegistered = await checkTeamAlreadyRegistered(team.teamNumber);
-    if (isAlreadyRegistered) {
+    // Use cached team registration status instead of making another Firebase call
+    if (isTeamAlreadyRegistered) {
       alert(`Team ${team.teamNumber} has already registered for a problem statement. Each team can only register once.`);
       return;
     }
 
-    // Show confirmation popup
+    // Show confirmation popup immediately - no waiting for Firebase
     setSelectedProblem(problemStatement);
     setShowConfirmation(true);
   };
@@ -112,10 +127,19 @@ const ProblemStatements = () => {
     if (!selectedProblem) return;
 
     setLoading(true);
-    setShowConfirmation(false);
     
     try {
-      // Add registration to Firestore
+      // Optimistic UI update - update count immediately
+      setProblemCounts(prev => ({
+        ...prev,
+        [selectedProblem.id]: (prev[selectedProblem.id] || 0) + 1
+      }));
+
+      // Show success message immediately
+      setShowConfirmation(false);
+      setSuccessMessage(`Registration Successful – Your team has been registered for "${selectedProblem.title}".`);
+      
+      // Add registration to Firestore in background
       await addDoc(collection(db, 'registrations'), {
         teamNumber: team.teamNumber,
         teamName: team.teamName,
@@ -125,14 +149,6 @@ const ProblemStatements = () => {
         timestamp: new Date()
       });
 
-      // Update local count
-      setProblemCounts(prev => ({
-        ...prev,
-        [selectedProblem.id]: (prev[selectedProblem.id] || 0) + 1
-      }));
-
-      setSuccessMessage(`Registration Successful – Your team has been registered for "${selectedProblem.title}".`);
-      
       // Clear selected problem
       setSelectedProblem(null);
       
@@ -143,8 +159,16 @@ const ProblemStatements = () => {
       
     } catch (error) {
       console.error('Error registering team:', error);
+      
+      // Revert optimistic update on error
+      setProblemCounts(prev => ({
+        ...prev,
+        [selectedProblem.id]: Math.max(0, (prev[selectedProblem.id] || 0) - 1)
+      }));
+      
+      setSuccessMessage('');
+      setShowConfirmation(true);
       alert('Error registering team. Please try again.');
-      setSelectedProblem(null);
     } finally {
       setLoading(false);
     }
@@ -155,8 +179,15 @@ const ProblemStatements = () => {
     setSelectedProblem(null);
   };
 
-  if (!team) {
-    return <div className="text-center">Loading...</div>;
+  if (!team || !teamRegistrationChecked) {
+    return (
+      <div className="text-center">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Loading...</span>
+        </div>
+        <p className="mt-2">Loading team data...</p>
+      </div>
+    );
   }
 
   if (successMessage) {
@@ -263,14 +294,14 @@ const ProblemStatements = () => {
           
           return (
             <div key={problem.id} className="col-md-6 col-lg-4">
-              <div className={`card h-100 ${isDisabled ? 'opacity-75' : ''}`} 
+              <div className={`card h-100 ${isDisabled || isTeamAlreadyRegistered ? 'opacity-75' : ''}`} 
                    style={{ 
-                     cursor: isDisabled ? 'not-allowed' : 'pointer',
+                     cursor: (isDisabled || isTeamAlreadyRegistered) ? 'not-allowed' : 'pointer',
                      transition: 'transform 0.2s, box-shadow 0.2s',
-                     border: isFilled ? '2px solid #dc3545' : '1px solid #dee2e6'
+                     border: (isFilled || isTeamAlreadyRegistered) ? '2px solid #dc3545' : '1px solid #dee2e6'
                    }}
                    onMouseEnter={(e) => {
-                     if (!isDisabled) {
+                     if (!isDisabled && !isTeamAlreadyRegistered) {
                        e.currentTarget.style.transform = 'scale(1.02)';
                        e.currentTarget.style.boxShadow = '0 8px 16px rgba(0,0,0,0.15)';
                      }
@@ -284,9 +315,9 @@ const ProblemStatements = () => {
                     <h5 className="card-title text-primary flex-grow-1">
                       {problem.title}
                     </h5>
-                    {isFilled && (
+                    {(isFilled || isTeamAlreadyRegistered) && (
                       <span className="badge bg-danger ms-2">
-                        FILLED
+                        {isTeamAlreadyRegistered ? 'TEAM REGISTERED' : 'FILLED'}
                       </span>
                     )}
                   </div>
@@ -302,10 +333,18 @@ const ProblemStatements = () => {
                     
                     <button
                       onClick={() => handleSelectProblem(problem)}
-                      disabled={isDisabled || loading}
-                      className={`btn ${isDisabled ? 'btn-danger' : 'btn-primary'}`}
+                      disabled={isDisabled || loading || isTeamAlreadyRegistered}
+                      className={`btn ${isDisabled || isTeamAlreadyRegistered ? 'btn-danger' : 'btn-primary'}`}
+                      style={{ minWidth: '80px' }}
                     >
-                      {isDisabled ? 'FILLED' : loading ? 'Processing...' : 'Select'}
+                      {isDisabled ? 'FILLED' : 
+                       isTeamAlreadyRegistered ? 'REGISTERED' :
+                       loading ? (
+                         <>
+                           <span className="spinner-border spinner-border-sm me-1" role="status"></span>
+                           Processing...
+                         </>
+                       ) : 'Select'}
                     </button>
                   </div>
                 </div>
