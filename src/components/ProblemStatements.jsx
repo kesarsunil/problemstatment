@@ -48,6 +48,7 @@ const ProblemStatements = () => {
   const [selectedProblem, setSelectedProblem] = useState(null);
   const [teamRegistrationChecked, setTeamRegistrationChecked] = useState(false);
   const [isTeamAlreadyRegistered, setIsTeamAlreadyRegistered] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(new Date());
 
   useEffect(() => {
     try {
@@ -66,6 +67,20 @@ const ProblemStatements = () => {
       navigate('/');
     }
   }, [teamData, navigate]);
+
+  // Real-time updates - refresh problem counts every 5 seconds
+  useEffect(() => {
+    if (!teamRegistrationChecked || isTeamAlreadyRegistered || successMessage) {
+      return; // Don't poll if team is already registered or if successful
+    }
+
+    const interval = setInterval(async () => {
+      await fetchProblemCounts();
+      setLastUpdated(new Date());
+    }, 5000); // Refresh every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [teamRegistrationChecked, isTeamAlreadyRegistered, successMessage]);
 
   const fetchProblemCounts = async () => {
     try {
@@ -88,8 +103,25 @@ const ProblemStatements = () => {
       });
       
       setProblemCounts(counts);
+      return counts;
     } catch (error) {
       console.error('Error fetching problem counts:', error);
+      return {};
+    }
+  };
+
+  // Real-time check for a specific problem's current count
+  const fetchCurrentProblemCount = async (problemId) => {
+    try {
+      const q = query(
+        collection(db, 'registrations'),
+        where('problemStatementId', '==', problemId)
+      );
+      const querySnapshot = await getDocs(q);
+      return querySnapshot.size;
+    } catch (error) {
+      console.error('Error fetching current problem count:', error);
+      return 0;
     }
   };
 
@@ -108,8 +140,10 @@ const ProblemStatements = () => {
   };
 
   const handleSelectProblem = async (problemStatement) => {
-    if (problemCounts[problemStatement.id] >= 3) {
-      return; // Already at limit
+    // Check if problem is already full (limit is now 2)
+    if (problemCounts[problemStatement.id] >= 2) {
+      alert(`Sorry! This problem statement is already filled. Please choose another problem statement.`);
+      return;
     }
 
     // Use cached team registration status instead of making another Firebase call
@@ -129,6 +163,30 @@ const ProblemStatements = () => {
     setLoading(true);
     
     try {
+      // REAL-TIME CHECK: Double-check availability before confirming
+      const currentCounts = await fetchCurrentProblemCount(selectedProblem.id);
+      
+      if (currentCounts >= 2) {
+        // Another user just filled the last spot
+        alert('Sorry! Another team just registered for this problem statement. Please choose another problem.');
+        setShowConfirmation(false);
+        setSelectedProblem(null);
+        // Refresh counts to show updated status
+        await fetchProblemCounts();
+        setLoading(false);
+        return;
+      }
+
+      // Double-check team registration status
+      const isStillNotRegistered = !(await checkTeamAlreadyRegistered(team.teamNumber));
+      if (!isStillNotRegistered) {
+        alert('Your team has already registered for a problem statement.');
+        setShowConfirmation(false);
+        setSelectedProblem(null);
+        setLoading(false);
+        return;
+      }
+
       // Optimistic UI update - update count immediately
       setProblemCounts(prev => ({
         ...prev,
@@ -235,6 +293,10 @@ const ProblemStatements = () => {
                   
                   <div className="alert alert-warning">
                     <strong>⚠️ Important:</strong> Once confirmed, this registration cannot be changed. Each team can only register for one problem statement.
+                    <br />
+                    <small className="text-info mt-1 d-block">
+                      <strong>🔒 Concurrent Protection:</strong> We'll verify availability one more time before confirming to ensure no other team takes the spot.
+                    </small>
                   </div>
                   
                   <p className="text-center">
@@ -281,6 +343,24 @@ const ProblemStatements = () => {
                 <p><strong>Team:</strong> {team.teamName} (#{team.teamNumber})</p>
                 <p><strong>Team Leader:</strong> {team.teamLeader}</p>
               </div>
+              <div className="alert alert-info mt-3">
+                <strong>🎯 Real-Time Booking System:</strong> Each problem statement can accommodate <strong>only 2 teams</strong>. 
+                When a spot is filled, you'll see "Choose another" message. Availability updates every 5 seconds.
+                <br />
+                <small className="text-muted">
+                  Last updated: {lastUpdated.toLocaleTimeString()} 
+                  <button 
+                    className="btn btn-sm btn-outline-primary ms-2"
+                    onClick={async () => {
+                      await fetchProblemCounts();
+                      setLastUpdated(new Date());
+                    }}
+                    style={{ fontSize: '0.8rem', padding: '2px 8px' }}
+                  >
+                    🔄 Refresh Now
+                  </button>
+                </small>
+              </div>
             </div>
           </div>
         </div>
@@ -289,8 +369,8 @@ const ProblemStatements = () => {
       <div className="row g-4">
         {PROBLEM_STATEMENTS.map((problem) => {
           const registeredCount = problemCounts[problem.id] || 0;
-          const isDisabled = registeredCount >= 3;
-          const isFilled = registeredCount >= 3;
+          const isDisabled = registeredCount >= 2; // Changed from 3 to 2
+          const isFilled = registeredCount >= 2; // Changed from 3 to 2
           
           return (
             <div key={problem.id} className="col-md-6 col-lg-4">
@@ -309,6 +389,13 @@ const ProblemStatements = () => {
                    onMouseLeave={(e) => {
                      e.currentTarget.style.transform = 'scale(1)';
                      e.currentTarget.style.boxShadow = '';
+                   }}
+                   onClick={() => {
+                     if (isDisabled) {
+                       alert('Sorry! This problem statement is already filled. Please choose another problem statement.');
+                     } else if (!isTeamAlreadyRegistered) {
+                       handleSelectProblem(problem);
+                     }
                    }}>
                 <div className="card-body d-flex flex-column">
                   <div className="d-flex justify-content-between align-items-start mb-2">
@@ -327,18 +414,26 @@ const ProblemStatements = () => {
                   </p>
                   
                   <div className="d-flex justify-content-between align-items-center mt-auto">
-                    <small className={`${registeredCount >= 3 ? 'text-danger fw-bold' : 'text-success'}`}>
-                      {registeredCount}/3 teams {isFilled ? '(COMPLETE)' : 'registered'}
+                    <small className={`${registeredCount >= 2 ? 'text-danger fw-bold' : registeredCount === 1 ? 'text-warning fw-bold' : 'text-success'}`}>
+                      {registeredCount}/2 teams {isFilled ? '(COMPLETE)' : 'registered'}
                     </small>
                     
                     <button
-                      onClick={() => handleSelectProblem(problem)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isDisabled) {
+                          alert('Sorry! This problem statement is already filled. Please choose another problem statement.');
+                        } else {
+                          handleSelectProblem(problem);
+                        }
+                      }}
                       disabled={isDisabled || loading || isTeamAlreadyRegistered}
-                      className={`btn ${isDisabled || isTeamAlreadyRegistered ? 'btn-danger' : 'btn-primary'}`}
-                      style={{ minWidth: '80px' }}
+                      className={`btn ${isDisabled || isTeamAlreadyRegistered ? 'btn-danger' : registeredCount === 1 ? 'btn-warning' : 'btn-primary'}`}
+                      style={{ minWidth: '100px' }}
                     >
                       {isDisabled ? 'FILLED' : 
                        isTeamAlreadyRegistered ? 'REGISTERED' :
+                       registeredCount === 1 ? 'LAST SPOT!' :
                        loading ? (
                          <>
                            <span className="spinner-border spinner-border-sm me-1" role="status"></span>
