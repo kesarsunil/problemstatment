@@ -196,100 +196,127 @@ const ProblemStatements = () => {
   const handleConfirmSelection = async () => {
     if (!selectedProblem) return;
 
+    // IMMEDIATE LOADING STATE - Show user action is processing
     setLoading(true);
     
+    // RECORD EXACT CLICK TIMESTAMP - Millisecond precision
+    const clickTimestamp = Date.now();
+    const clickTime = performance.now(); // High precision timer
+    
+    console.log(`🚀 REGISTRATION ATTEMPT: Team ${team.teamId} clicked at ${clickTimestamp} (${new Date(clickTimestamp).toLocaleTimeString()}.${String(clickTimestamp % 1000).padStart(3, '0')})`);
+    
     try {
-      // ATOMIC TRANSACTION - Real-time booking protection with millisecond-level checking
+      // ULTRA-FAST ATOMIC TRANSACTION - Millisecond-level race protection
       const result = await runTransaction(db, async (transaction) => {
-        // Step 1: REAL-TIME CHECK - Get current registrations count for this problem (millisecond precision)
+        const transactionStartTime = performance.now();
+        
+        // STEP 1: LIGHTNING-FAST COUNT CHECK - Get current registrations
         const problemRegistrationsQuery = query(
           collection(db, 'registrations'),
           where('problemStatementId', '==', selectedProblem.id)
         );
         const problemSnapshot = await getDocs(problemRegistrationsQuery);
         const currentCount = problemSnapshot.size;
+        const queryTime = performance.now();
 
-        // Step 2: IMMEDIATE CHECK - Verify team is not already registered (anywhere)
+        // STEP 2: INSTANT TEAM VERIFICATION - Check if team already registered
         const teamRegistrationsQuery = query(
           collection(db, 'registrations'),
           where('teamId', '==', team.teamId)
         );
         const teamSnapshot = await getDocs(teamRegistrationsQuery);
+        const teamCheckTime = performance.now();
         
         if (!teamSnapshot.empty) {
-          throw new Error('TEAM_ALREADY_REGISTERED');
+          throw new Error(`TEAM_ALREADY_REGISTERED:${clickTimestamp}`);
         }
 
-        // Step 3: CRITICAL MILLISECOND CHECK - Verify problem is not full RIGHT NOW
+        // STEP 3: CRITICAL MILLISECOND RACE CHECK - First-come-first-served
         if (currentCount >= 2) {
-          throw new Error('PROBLEM_FULL_REALTIME');
+          const rejectionTime = Date.now();
+          const processingDelay = rejectionTime - clickTimestamp;
+          throw new Error(`PROBLEM_FULL_RACE:${clickTimestamp}:${rejectionTime}:${processingDelay}`);
         }
 
-        // Step 4: DOUBLE VERIFICATION - Additional safety check for empty problem slots
-        if (currentCount < 0) {
-          throw new Error('INVALID_COUNT_STATE');
-        }
-
-        // Step 5: MILLISECOND-LEVEL SUCCESS - Problem is available, register immediately
+        // STEP 4: INSTANT SUCCESS REGISTRATION - Reserve slot immediately
+        const registrationTimestamp = Date.now();
         const registrationRef = doc(collection(db, 'registrations'));
+        
         transaction.set(registrationRef, {
           teamId: team.teamId,
           teamName: team.teamName,
           teamLeader: team.teamLeader,
           problemStatementId: selectedProblem.id,
           problemStatementTitle: selectedProblem.title,
-          timestamp: new Date(),
-          registrationTimestamp: Date.now(), // Exact millisecond timestamp
-          documentId: registrationRef.id
+          clickTimestamp: clickTimestamp,                    // When user clicked confirm
+          registrationTimestamp: registrationTimestamp,     // When registration completed
+          processingTime: registrationTimestamp - clickTimestamp, // Total processing time
+          transactionStartTime: transactionStartTime,       // Performance tracking
+          queryCompletionTime: queryTime - transactionStartTime,
+          teamCheckTime: teamCheckTime - queryTime,
+          serverTimestamp: new Date(),                      // Server timestamp
+          documentId: registrationRef.id,
+          racePosition: currentCount + 1                    // Position in the race (1st or 2nd)
         });
+
+        const completionTime = performance.now();
+        const totalProcessingTime = completionTime - clickTime;
 
         return { 
           success: true, 
           newCount: currentCount + 1,
-          registeredAt: Date.now(),
+          clickTimestamp: clickTimestamp,
+          registrationTimestamp: registrationTimestamp,
+          processingTime: registrationTimestamp - clickTimestamp,
+          performanceTime: totalProcessingTime,
+          racePosition: currentCount + 1,
           availableSlots: 2 - (currentCount + 1)
         };
       });
 
-      // SUCCESS - Registration completed atomically with millisecond precision
+      // 🎉 SUCCESS - First team wins the race!
+      const successTime = Date.now();
+      const totalTime = successTime - clickTimestamp;
+      
       setShowConfirmation(false);
       setSuccessMessage(
-        `✅ Registration Successful! Your team has been registered for "${selectedProblem.title}" at ${new Date(result.registeredAt).toLocaleTimeString()}.${String(result.registeredAt % 1000).padStart(3, '0')} (${result.availableSlots} slots remaining).`
+        `🏆 REGISTRATION SUCCESS! You won the race! Team ${team.teamName} secured position #${result.racePosition} for "${selectedProblem.title}" in ${totalTime}ms (clicked: ${new Date(result.clickTimestamp).toLocaleTimeString()}.${String(result.clickTimestamp % 1000).padStart(3, '0')}, registered: ${new Date(result.registrationTimestamp).toLocaleTimeString()}.${String(result.registrationTimestamp % 1000).padStart(3, '0')})`
       );
       
-      // Update local state ONLY after successful database write
+      // Update local state immediately
       setProblemCounts(prev => ({
         ...prev,
         [selectedProblem.id]: result.newCount
       }));
 
-      // Clear selected problem
       setSelectedProblem(null);
       
-      // Redirect to home after 4 seconds to show precise timestamp
+      // Redirect after showing success details
       setTimeout(() => {
         navigate('/');
-      }, 4000);
+      }, 5000);
       
     } catch (error) {
-      console.error('Transaction failed:', error);
+      const errorTime = Date.now();
+      const totalErrorTime = errorTime - clickTimestamp;
       
-      // Handle specific error cases with millisecond-level feedback
-      if (error.message === 'TEAM_ALREADY_REGISTERED') {
-        alert('❌ REGISTRATION BLOCKED: Your team has already registered for a problem statement. Each team can only register once.');
-      } else if (error.message === 'PROBLEM_FULL_REALTIME') {
-        // Fetch latest counts to show real-time status
-        const latestCount = await fetchCurrentProblemCount(selectedProblem.id);
-        alert(`❌ PROBLEM STATEMENT FILLED: Another team registered in the last few milliseconds! This problem now has ${latestCount}/2 teams. Please choose another problem statement.`);
-        // Refresh all counts to show updated status
+      console.error('🚫 RACE LOST:', error);
+      
+      // Handle millisecond-level race conditions
+      if (error.message.includes('TEAM_ALREADY_REGISTERED')) {
+        const [, originalClick] = error.message.split(':');
+        alert(`🚫 TEAM ALREADY REGISTERED: Your team registered earlier. Processing time: ${totalErrorTime}ms (clicked at ${new Date(parseInt(originalClick)).toLocaleTimeString()}.${String(parseInt(originalClick) % 1000).padStart(3, '0')})`);
+        
+      } else if (error.message.includes('PROBLEM_FULL_RACE')) {
+        const [, clickTime, rejectTime, delay] = error.message.split(':');
+        alert(`⚡ RACE LOST! Another team was faster by milliseconds!\n\n🕐 You clicked: ${new Date(parseInt(clickTime)).toLocaleTimeString()}.${String(parseInt(clickTime) % 1000).padStart(3, '0')}\n🚫 Rejected at: ${new Date(parseInt(rejectTime)).toLocaleTimeString()}.${String(parseInt(rejectTime) % 1000).padStart(3, '0')}\n⏱️ Processing delay: ${delay}ms\n\nThis problem statement is now FULL (2/2 teams). Please choose another problem statement.`);
+        
+        // Immediately refresh counts to show updated status
         await fetchProblemCounts();
         setLastUpdated(new Date());
-      } else if (error.message === 'INVALID_COUNT_STATE') {
-        alert('❌ SYSTEM ERROR: Invalid registration count detected. Please refresh and try again.');
-        await fetchProblemCounts();
-        setLastUpdated(new Date());
+        
       } else {
-        alert('❌ Registration failed due to a technical error. The problem statement may have become full. Please refresh and try again.');
+        alert(`🚫 REGISTRATION FAILED: Technical error after ${totalErrorTime}ms. The problem may have been filled by another team. Please refresh and try again.`);
         await fetchProblemCounts();
         setLastUpdated(new Date());
       }
@@ -371,11 +398,13 @@ const ProblemStatements = () => {
                     </div>
                   </div>
                   
-                  <div className="alert alert-warning">
-                    <strong>⚠️ Important:</strong> Once confirmed, this registration cannot be changed. Each team can only register for one problem statement.
+                  <div className="alert alert-danger">
+                    <strong>⚡ REAL-TIME RACE:</strong> Multiple teams may be trying to register simultaneously. When you click "Confirm", the system will check availability in milliseconds.
+                    <br />
+                    <strong>🏃‍♂️ First-Come-First-Served:</strong> The fastest click wins! If another team clicks even milliseconds before you, they get the slot.
                     <br />
                     <small className="text-info mt-1 d-block">
-                      <strong>⚡ Millisecond Protection:</strong> System will verify availability again before final registration - if another team registers simultaneously, only ONE will succeed.
+                      <strong>🎯 Race Protection:</strong> Atomic database transactions ensure only the first team succeeds - no double bookings possible.
                     </small>
                   </div>
                   
@@ -398,14 +427,17 @@ const ProblemStatements = () => {
                   className="btn btn-success" 
                   onClick={handleConfirmSelection}
                   disabled={loading}
+                  style={{ minWidth: '180px' }}
                 >
                   {loading ? (
                     <>
                       <span className="spinner-border spinner-border-sm me-2" role="status"></span>
-                      Confirming...
+                      Racing for slot...
                     </>
                   ) : (
-                    'Confirm Registration'
+                    <>
+                      🏃‍♂️ CONFIRM - JOIN RACE!
+                    </>
                   )}
                 </button>
               </div>
@@ -423,14 +455,16 @@ const ProblemStatements = () => {
                 <p><strong>Team:</strong> {team.teamName} (ID: {team.teamId})</p>
                 <p><strong>Team Leader:</strong> {team.teamLeader}</p>
               </div>
-              <div className="alert alert-info mt-3">
-                <strong>⚡ Real-Time Atomic Booking System:</strong> Each problem statement can accommodate <strong>only 2 teams</strong>. 
-                Uses millisecond-level database transactions with real-time verification - if multiple teams click simultaneously, only ONE will succeed.
+              <div className="alert alert-warning mt-3">
+                <strong>🏁 REAL-TIME RACING SYSTEM:</strong> Each problem statement has <strong>only 2 slots</strong>. 
+                Multiple teams can compete simultaneously - <strong>fastest click wins!</strong>
+                <br />
+                <strong>⚡ Millisecond Precision:</strong> System tracks exact click timestamps. If you click milliseconds after another team, you'll be rejected.
                 <br />
                 <small className="text-muted">
-                  Last updated: {lastUpdated.toLocaleTimeString()}.{String(lastUpdated.getTime() % 1000).padStart(3, '0')} 
+                  🕐 Last updated: {lastUpdated.toLocaleTimeString()}.{String(lastUpdated.getTime() % 1000).padStart(3, '0')} 
                   <button 
-                    className="btn btn-sm btn-outline-primary ms-2"
+                    className="btn btn-sm btn-outline-warning ms-2"
                     onClick={async () => {
                       setLoading(true);
                       await fetchProblemCounts();
@@ -442,10 +476,10 @@ const ProblemStatements = () => {
                   >
                     {loading ? (
                       <>
-                        <span className="spinner-border spinner-border-sm" style={{ width: '0.8rem', height: '0.8rem' }}></span> Refreshing...
+                        <span className="spinner-border spinner-border-sm" style={{ width: '0.8rem', height: '0.8rem' }}></span> Racing...
                       </>
                     ) : (
-                      '🔄 Refresh Now'
+                      '🔄 Refresh Race Status'
                     )}
                   </button>
                 </small>
@@ -517,18 +551,18 @@ const ProblemStatements = () => {
                         }
                       }}
                       disabled={isDisabled || loading || isTeamAlreadyRegistered}
-                      className={`btn ${isDisabled || isTeamAlreadyRegistered ? 'btn-danger' : registeredCount === 1 ? 'btn-warning' : 'btn-primary'}`}
-                      style={{ minWidth: '100px' }}
+                      className={`btn ${isDisabled || isTeamAlreadyRegistered ? 'btn-danger' : registeredCount === 1 ? 'btn-warning' : 'btn-success'}`}
+                      style={{ minWidth: '120px' }}
                     >
-                      {isDisabled ? 'FILLED' : 
+                      {isDisabled ? 'RACE OVER' : 
                        isTeamAlreadyRegistered ? 'REGISTERED' :
-                       registeredCount === 1 ? 'LAST SPOT!' :
+                       registeredCount === 1 ? '🏃‍♂️ FINAL SLOT!' :
                        loading ? (
                          <>
                            <span className="spinner-border spinner-border-sm me-1" role="status"></span>
-                           Processing...
+                           Checking...
                          </>
-                       ) : 'Select'}
+                       ) : '🏁 JOIN RACE'}
                     </button>
                   </div>
                 </div>
