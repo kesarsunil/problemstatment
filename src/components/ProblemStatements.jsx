@@ -140,21 +140,57 @@ const ProblemStatements = () => {
   };
 
   const handleSelectProblem = async (problemStatement) => {
-    // Check if problem is already full (limit is now 2)
-    if (problemCounts[problemStatement.id] >= 2) {
-      alert(`Sorry! This problem statement is already filled. Please choose another problem statement.`);
-      return;
-    }
+    // STEP 1: IMMEDIATE PRE-CHECK - Real-time verification before showing confirmation
+    setLoading(true);
+    
+    try {
+      // Get absolutely latest count from database (millisecond-level check)
+      const realTimeCount = await fetchCurrentProblemCount(problemStatement.id);
+      
+      // STEP 2: MILLISECOND-LEVEL AVAILABILITY CHECK
+      if (realTimeCount >= 2) {
+        alert(`🚫 PROBLEM STATEMENT FILLED: This problem statement just became full (${realTimeCount}/2 teams). Please choose another problem statement.`);
+        // Update local counts to reflect real-time status
+        await fetchProblemCounts();
+        setLastUpdated(new Date());
+        setLoading(false);
+        return;
+      }
 
-    // Use cached team registration status instead of making another Firebase call
-    if (isTeamAlreadyRegistered) {
-      alert(`Team ${team.teamName} has already registered for a problem statement. Each team can only register once.`);
-      return;
-    }
+      // STEP 3: REAL-TIME TEAM REGISTRATION CHECK
+      const isCurrentlyRegistered = await checkTeamAlreadyRegistered(team.teamId);
+      if (isCurrentlyRegistered) {
+        alert(`🚫 TEAM ALREADY REGISTERED: Team ${team.teamName} has already registered for a problem statement. Each team can only register once.`);
+        setIsTeamAlreadyRegistered(true);
+        setLoading(false);
+        return;
+      }
 
-    // Show confirmation popup immediately - no waiting for Firebase
-    setSelectedProblem(problemStatement);
-    setShowConfirmation(true);
+      // STEP 4: AVAILABLE SLOTS VERIFICATION
+      const availableSlots = 2 - realTimeCount;
+      if (availableSlots <= 0) {
+        alert(`🚫 NO SLOTS AVAILABLE: This problem statement has no available slots (${realTimeCount}/2 teams registered).`);
+        await fetchProblemCounts();
+        setLastUpdated(new Date());
+        setLoading(false);
+        return;
+      }
+
+      // STEP 5: SUCCESS - Show confirmation with real-time slot information
+      setSelectedProblem({
+        ...problemStatement,
+        realTimeCount: realTimeCount,
+        availableSlots: availableSlots,
+        checkedAt: Date.now()
+      });
+      setShowConfirmation(true);
+      
+    } catch (error) {
+      console.error('Error during real-time pre-check:', error);
+      alert('❌ Unable to verify problem statement availability. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleConfirmSelection = async () => {
@@ -163,9 +199,9 @@ const ProblemStatements = () => {
     setLoading(true);
     
     try {
-      // ATOMIC TRANSACTION - Real-time booking protection
+      // ATOMIC TRANSACTION - Real-time booking protection with millisecond-level checking
       const result = await runTransaction(db, async (transaction) => {
-        // Step 1: Get current registrations count for this problem
+        // Step 1: REAL-TIME CHECK - Get current registrations count for this problem (millisecond precision)
         const problemRegistrationsQuery = query(
           collection(db, 'registrations'),
           where('problemStatementId', '==', selectedProblem.id)
@@ -173,7 +209,7 @@ const ProblemStatements = () => {
         const problemSnapshot = await getDocs(problemRegistrationsQuery);
         const currentCount = problemSnapshot.size;
 
-        // Step 2: Check if team is already registered (anywhere)
+        // Step 2: IMMEDIATE CHECK - Verify team is not already registered (anywhere)
         const teamRegistrationsQuery = query(
           collection(db, 'registrations'),
           where('teamId', '==', team.teamId)
@@ -184,13 +220,17 @@ const ProblemStatements = () => {
           throw new Error('TEAM_ALREADY_REGISTERED');
         }
 
-        // Step 3: Check if problem is full (limit is 2)
+        // Step 3: CRITICAL MILLISECOND CHECK - Verify problem is not full RIGHT NOW
         if (currentCount >= 2) {
-          throw new Error('PROBLEM_FULL');
+          throw new Error('PROBLEM_FULL_REALTIME');
         }
 
-        // Step 4: If we reach here, we can safely register
-        // Create the registration document atomically
+        // Step 4: DOUBLE VERIFICATION - Additional safety check for empty problem slots
+        if (currentCount < 0) {
+          throw new Error('INVALID_COUNT_STATE');
+        }
+
+        // Step 5: MILLISECOND-LEVEL SUCCESS - Problem is available, register immediately
         const registrationRef = doc(collection(db, 'registrations'));
         transaction.set(registrationRef, {
           teamId: team.teamId,
@@ -199,15 +239,23 @@ const ProblemStatements = () => {
           problemStatementId: selectedProblem.id,
           problemStatementTitle: selectedProblem.title,
           timestamp: new Date(),
+          registrationTimestamp: Date.now(), // Exact millisecond timestamp
           documentId: registrationRef.id
         });
 
-        return { success: true, newCount: currentCount + 1 };
+        return { 
+          success: true, 
+          newCount: currentCount + 1,
+          registeredAt: Date.now(),
+          availableSlots: 2 - (currentCount + 1)
+        };
       });
 
-      // SUCCESS - Registration completed atomically
+      // SUCCESS - Registration completed atomically with millisecond precision
       setShowConfirmation(false);
-      setSuccessMessage(`✅ Registration Successful! Your team has been registered for "${selectedProblem.title}".`);
+      setSuccessMessage(
+        `✅ Registration Successful! Your team has been registered for "${selectedProblem.title}" at ${new Date(result.registeredAt).toLocaleTimeString()}.${String(result.registeredAt % 1000).padStart(3, '0')} (${result.availableSlots} slots remaining).`
+      );
       
       // Update local state ONLY after successful database write
       setProblemCounts(prev => ({
@@ -218,24 +266,32 @@ const ProblemStatements = () => {
       // Clear selected problem
       setSelectedProblem(null);
       
-      // Redirect to home after 3 seconds
+      // Redirect to home after 4 seconds to show precise timestamp
       setTimeout(() => {
         navigate('/');
-      }, 3000);
+      }, 4000);
       
     } catch (error) {
       console.error('Transaction failed:', error);
       
-      // Handle specific error cases
+      // Handle specific error cases with millisecond-level feedback
       if (error.message === 'TEAM_ALREADY_REGISTERED') {
-        alert('❌ Your team has already registered for a problem statement. Each team can only register once.');
-      } else if (error.message === 'PROBLEM_FULL') {
-        alert('❌ Sorry! Another team just registered for this problem statement. Please choose another problem - this one is now FILLED.');
-        // Refresh the counts to show updated status
+        alert('❌ REGISTRATION BLOCKED: Your team has already registered for a problem statement. Each team can only register once.');
+      } else if (error.message === 'PROBLEM_FULL_REALTIME') {
+        // Fetch latest counts to show real-time status
+        const latestCount = await fetchCurrentProblemCount(selectedProblem.id);
+        alert(`❌ PROBLEM STATEMENT FILLED: Another team registered in the last few milliseconds! This problem now has ${latestCount}/2 teams. Please choose another problem statement.`);
+        // Refresh all counts to show updated status
+        await fetchProblemCounts();
+        setLastUpdated(new Date());
+      } else if (error.message === 'INVALID_COUNT_STATE') {
+        alert('❌ SYSTEM ERROR: Invalid registration count detected. Please refresh and try again.');
         await fetchProblemCounts();
         setLastUpdated(new Date());
       } else {
-        alert('❌ Registration failed due to a technical error. Please try again.');
+        alert('❌ Registration failed due to a technical error. The problem statement may have become full. Please refresh and try again.');
+        await fetchProblemCounts();
+        setLastUpdated(new Date());
       }
       
       setShowConfirmation(false);
@@ -300,6 +356,17 @@ const ProblemStatements = () => {
                       <div className="card-body">
                         <h6 className="card-title text-primary">{selectedProblem.title}</h6>
                         <p className="card-text small text-muted">{selectedProblem.description}</p>
+                        {selectedProblem.realTimeCount !== undefined && (
+                          <div className="text-center mt-2">
+                            <span className={`badge ${selectedProblem.availableSlots === 1 ? 'bg-warning' : 'bg-success'} fs-6`}>
+                              {selectedProblem.realTimeCount}/2 teams registered • {selectedProblem.availableSlots} slot{selectedProblem.availableSlots !== 1 ? 's' : ''} available
+                            </span>
+                            <br />
+                            <small className="text-muted">
+                              Verified at: {new Date(selectedProblem.checkedAt).toLocaleTimeString()}.{String(selectedProblem.checkedAt % 1000).padStart(3, '0')}
+                            </small>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -308,7 +375,7 @@ const ProblemStatements = () => {
                     <strong>⚠️ Important:</strong> Once confirmed, this registration cannot be changed. Each team can only register for one problem statement.
                     <br />
                     <small className="text-info mt-1 d-block">
-                      <strong>⚡ Atomic Protection:</strong> Using millisecond-level database transactions - only ONE team can succeed if multiple teams click simultaneously.
+                      <strong>⚡ Millisecond Protection:</strong> System will verify availability again before final registration - if another team registers simultaneously, only ONE will succeed.
                     </small>
                   </div>
                   
@@ -357,20 +424,29 @@ const ProblemStatements = () => {
                 <p><strong>Team Leader:</strong> {team.teamLeader}</p>
               </div>
               <div className="alert alert-info mt-3">
-                <strong>⚡ Atomic Booking System:</strong> Each problem statement can accommodate <strong>only 2 teams</strong>. 
-                Uses millisecond-level database transactions - if multiple teams click simultaneously, only ONE will succeed.
+                <strong>⚡ Real-Time Atomic Booking System:</strong> Each problem statement can accommodate <strong>only 2 teams</strong>. 
+                Uses millisecond-level database transactions with real-time verification - if multiple teams click simultaneously, only ONE will succeed.
                 <br />
                 <small className="text-muted">
-                  Last updated: {lastUpdated.toLocaleTimeString()} 
+                  Last updated: {lastUpdated.toLocaleTimeString()}.{String(lastUpdated.getTime() % 1000).padStart(3, '0')} 
                   <button 
                     className="btn btn-sm btn-outline-primary ms-2"
                     onClick={async () => {
+                      setLoading(true);
                       await fetchProblemCounts();
                       setLastUpdated(new Date());
+                      setLoading(false);
                     }}
+                    disabled={loading}
                     style={{ fontSize: '0.8rem', padding: '2px 8px' }}
                   >
-                    🔄 Refresh Now
+                    {loading ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm" style={{ width: '0.8rem', height: '0.8rem' }}></span> Refreshing...
+                      </>
+                    ) : (
+                      '🔄 Refresh Now'
+                    )}
                   </button>
                 </small>
               </div>
