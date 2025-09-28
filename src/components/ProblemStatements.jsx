@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
-import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs, runTransaction, doc } from 'firebase/firestore';
 
 // Sample problem statements data
 const PROBLEM_STATEMENTS = [
@@ -57,7 +57,7 @@ const ProblemStatements = () => {
       // Fetch both problem counts and check team registration in parallel
       Promise.all([
         fetchProblemCounts(),
-        checkTeamAlreadyRegistered(decodedTeamData.teamNumber)
+        checkTeamAlreadyRegistered(decodedTeamData.teamId)
       ]).then(([, isRegistered]) => {
         setIsTeamAlreadyRegistered(isRegistered);
         setTeamRegistrationChecked(true);
@@ -125,11 +125,11 @@ const ProblemStatements = () => {
     }
   };
 
-  const checkTeamAlreadyRegistered = async (teamNumber) => {
+  const checkTeamAlreadyRegistered = async (teamId) => {
     try {
       const q = query(
         collection(db, 'registrations'),
-        where('teamNumber', '==', teamNumber)
+        where('teamId', '==', teamId)
       );
       const querySnapshot = await getDocs(q);
       return !querySnapshot.empty;
@@ -148,7 +148,7 @@ const ProblemStatements = () => {
 
     // Use cached team registration status instead of making another Firebase call
     if (isTeamAlreadyRegistered) {
-      alert(`Team ${team.teamNumber} has already registered for a problem statement. Each team can only register once.`);
+      alert(`Team ${team.teamName} has already registered for a problem statement. Each team can only register once.`);
       return;
     }
 
@@ -163,49 +163,57 @@ const ProblemStatements = () => {
     setLoading(true);
     
     try {
-      // REAL-TIME CHECK: Double-check availability before confirming
-      const currentCounts = await fetchCurrentProblemCount(selectedProblem.id);
+      // ATOMIC TRANSACTION - Real-time booking protection
+      const result = await runTransaction(db, async (transaction) => {
+        // Step 1: Get current registrations count for this problem
+        const problemRegistrationsQuery = query(
+          collection(db, 'registrations'),
+          where('problemStatementId', '==', selectedProblem.id)
+        );
+        const problemSnapshot = await getDocs(problemRegistrationsQuery);
+        const currentCount = problemSnapshot.size;
+
+        // Step 2: Check if team is already registered (anywhere)
+        const teamRegistrationsQuery = query(
+          collection(db, 'registrations'),
+          where('teamId', '==', team.teamId)
+        );
+        const teamSnapshot = await getDocs(teamRegistrationsQuery);
+        
+        if (!teamSnapshot.empty) {
+          throw new Error('TEAM_ALREADY_REGISTERED');
+        }
+
+        // Step 3: Check if problem is full (limit is 2)
+        if (currentCount >= 2) {
+          throw new Error('PROBLEM_FULL');
+        }
+
+        // Step 4: If we reach here, we can safely register
+        // Create the registration document atomically
+        const registrationRef = doc(collection(db, 'registrations'));
+        transaction.set(registrationRef, {
+          teamId: team.teamId,
+          teamName: team.teamName,
+          teamLeader: team.teamLeader,
+          problemStatementId: selectedProblem.id,
+          problemStatementTitle: selectedProblem.title,
+          timestamp: new Date(),
+          documentId: registrationRef.id
+        });
+
+        return { success: true, newCount: currentCount + 1 };
+      });
+
+      // SUCCESS - Registration completed atomically
+      setShowConfirmation(false);
+      setSuccessMessage(`✅ Registration Successful! Your team has been registered for "${selectedProblem.title}".`);
       
-      if (currentCounts >= 2) {
-        // Another user just filled the last spot
-        alert('Sorry! Another team just registered for this problem statement. Please choose another problem.');
-        setShowConfirmation(false);
-        setSelectedProblem(null);
-        // Refresh counts to show updated status
-        await fetchProblemCounts();
-        setLoading(false);
-        return;
-      }
-
-      // Double-check team registration status
-      const isStillNotRegistered = !(await checkTeamAlreadyRegistered(team.teamNumber));
-      if (!isStillNotRegistered) {
-        alert('Your team has already registered for a problem statement.');
-        setShowConfirmation(false);
-        setSelectedProblem(null);
-        setLoading(false);
-        return;
-      }
-
-      // Optimistic UI update - update count immediately
+      // Update local state ONLY after successful database write
       setProblemCounts(prev => ({
         ...prev,
-        [selectedProblem.id]: (prev[selectedProblem.id] || 0) + 1
+        [selectedProblem.id]: result.newCount
       }));
-
-      // Show success message immediately
-      setShowConfirmation(false);
-      setSuccessMessage(`Registration Successful – Your team has been registered for "${selectedProblem.title}".`);
-      
-      // Add registration to Firestore in background
-      await addDoc(collection(db, 'registrations'), {
-        teamNumber: team.teamNumber,
-        teamName: team.teamName,
-        teamLeader: team.teamLeader,
-        problemStatementId: selectedProblem.id,
-        problemStatementTitle: selectedProblem.title,
-        timestamp: new Date()
-      });
 
       // Clear selected problem
       setSelectedProblem(null);
@@ -216,17 +224,22 @@ const ProblemStatements = () => {
       }, 3000);
       
     } catch (error) {
-      console.error('Error registering team:', error);
+      console.error('Transaction failed:', error);
       
-      // Revert optimistic update on error
-      setProblemCounts(prev => ({
-        ...prev,
-        [selectedProblem.id]: Math.max(0, (prev[selectedProblem.id] || 0) - 1)
-      }));
+      // Handle specific error cases
+      if (error.message === 'TEAM_ALREADY_REGISTERED') {
+        alert('❌ Your team has already registered for a problem statement. Each team can only register once.');
+      } else if (error.message === 'PROBLEM_FULL') {
+        alert('❌ Sorry! Another team just registered for this problem statement. Please choose another problem - this one is now FILLED.');
+        // Refresh the counts to show updated status
+        await fetchProblemCounts();
+        setLastUpdated(new Date());
+      } else {
+        alert('❌ Registration failed due to a technical error. Please try again.');
+      }
       
-      setSuccessMessage('');
-      setShowConfirmation(true);
-      alert('Error registering team. Please try again.');
+      setShowConfirmation(false);
+      setSelectedProblem(null);
     } finally {
       setLoading(false);
     }
@@ -276,7 +289,7 @@ const ProblemStatements = () => {
                 <div className="text-center">
                   <div className="mb-3">
                     <strong>Team Details:</strong>
-                    <p className="mb-1">Team Number: <span className="text-primary">{team.teamNumber}</span></p>
+                    <p className="mb-1">Team ID: <span className="text-primary">{team.teamId}</span></p>
                     <p className="mb-1">Team Name: <span className="text-primary">{team.teamName}</span></p>
                     <p className="mb-3">Team Leader: <span className="text-primary">{team.teamLeader}</span></p>
                   </div>
@@ -295,7 +308,7 @@ const ProblemStatements = () => {
                     <strong>⚠️ Important:</strong> Once confirmed, this registration cannot be changed. Each team can only register for one problem statement.
                     <br />
                     <small className="text-info mt-1 d-block">
-                      <strong>🔒 Concurrent Protection:</strong> We'll verify availability one more time before confirming to ensure no other team takes the spot.
+                      <strong>⚡ Atomic Protection:</strong> Using millisecond-level database transactions - only ONE team can succeed if multiple teams click simultaneously.
                     </small>
                   </div>
                   
@@ -340,12 +353,12 @@ const ProblemStatements = () => {
             <div className="card-body text-center">
               <h2 className="card-title">Select Problem Statement</h2>
               <div className="text-muted">
-                <p><strong>Team:</strong> {team.teamName} (#{team.teamNumber})</p>
+                <p><strong>Team:</strong> {team.teamName} (ID: {team.teamId})</p>
                 <p><strong>Team Leader:</strong> {team.teamLeader}</p>
               </div>
               <div className="alert alert-info mt-3">
-                <strong>🎯 Real-Time Booking System:</strong> Each problem statement can accommodate <strong>only 2 teams</strong>. 
-                When a spot is filled, you'll see "Choose another" message. Availability updates every 5 seconds.
+                <strong>⚡ Atomic Booking System:</strong> Each problem statement can accommodate <strong>only 2 teams</strong>. 
+                Uses millisecond-level database transactions - if multiple teams click simultaneously, only ONE will succeed.
                 <br />
                 <small className="text-muted">
                   Last updated: {lastUpdated.toLocaleTimeString()} 
