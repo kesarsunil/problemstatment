@@ -54,7 +54,24 @@ const REGISTERED_TEAMS = [
   { teamId: 'T047', teamName: 'V12', teamLeader: 'GARLAPATI HANMANTH SAI RAM', registrationId: '99230040836' },
   { teamId: 'T048', teamName: 'Team Inevitables', teamLeader: 'Santimalla Lakshmidhar Reddy', registrationId: '99240041393' },
   { teamId: 'T049', teamName: 'Team Nellore', teamLeader: 'KODE DEEPAK', registrationId: '99240041365' },
-  { teamId: 'T050', teamName: 'TEAM DEVARA', teamLeader: 'Matli Lakshmi Prasanna Kumar Reddy', registrationId: '99230040135' }
+  { teamId: 'T050', teamName: 'TEAM DEVARA', teamLeader: 'Matli Lakshmi Prasanna Kumar Reddy', registrationId: '99230040135' },
+  { teamId: 'T051', teamName: 'Code Royals', teamLeader: 'Besta Charitha', registrationId: '99230040491' },
+  { teamId: 'T052', teamName: 'TEAM SPIRIT', teamLeader: 'Dhudekula Zaheer', registrationId: '99230040524' },
+  { teamId: 'T053', teamName: 'TARGARYEN', teamLeader: 'Varugu MD Anees', registrationId: '99230040448' },
+  { teamId: 'T054', teamName: 'Black squad', teamLeader: 'A SAM JOEL', registrationId: '9924051017' },
+  { teamId: 'T055', teamName: 'TEAM VLC', teamLeader: 'KATTA VEERANJINEYULU', registrationId: '99240040514' },
+  { teamId: 'T056', teamName: 'CLUTCH GODS', teamLeader: 'T.Chandra shekar', registrationId: '99230040887' },
+  { teamId: 'T057', teamName: 'Shadowforce', teamLeader: 'Kasaraneni Chandra sen', registrationId: '99230040333' },
+  { teamId: 'T058', teamName: 'Hack Squad', teamLeader: 'Yerra Thrinesh', registrationId: '99230040187' },
+  { teamId: 'T059', teamName: 'Coders', teamLeader: 'Kanti Varun Venkat', registrationId: '99230040328' },
+  { teamId: 'T060', teamName: 'Team Rocks', teamLeader: 'SAYED AFAN ALI', registrationId: '99230041194' },
+  { teamId: 'T061', teamName: 'Apx Gp', teamLeader: 'Boppadala.NagaSanjay', registrationId: '9824005007' },
+  { teamId: 'T062', teamName: 'TEAM APEX', teamLeader: 'APPALA VENKATA SAI NIKHIL', registrationId: '9824005002' },
+  { teamId: 'T063', teamName: 'ALCO NINJAS', teamLeader: 'BATTALA DHARANEESWAR', registrationId: '99230040267' },
+  { teamId: 'T064', teamName: 'Gen-z core', teamLeader: 'MARRI.UDAY RAJA SEKHAR REDDY', registrationId: '9923008044' },
+  { teamId: 'T065', teamName: 'DREAM CODERS', teamLeader: 'VANGA VENKATA CHARAN SIVA KUMAR', registrationId: '99220041755' },
+  { teamId: 'T066', teamName: 'Debug Thugs', teamLeader: 'JUNNURU AKHIL VANKATA SATYA KARTHIK', registrationId: '99230040581' },
+  { teamId: 'T067', teamName: 'Team Special', teamLeader: 'Reserved Team', registrationId: 'RESERVE001' }
 ];
 
 const RegistrationForm = () => {
@@ -104,6 +121,7 @@ const RegistrationForm = () => {
 
   const checkTeamAlreadyRegistered = async (teamId) => {
     try {
+      // Check if team has already registered for ANY problem
       const q = query(
         collection(db, 'registrations'),
         where('teamId', '==', teamId)
@@ -113,6 +131,21 @@ const RegistrationForm = () => {
     } catch (error) {
       console.error('Error checking team registration:', error);
       return false;
+    }
+  };
+
+  const checkTeamAccessHistory = (teamId) => {
+    // Check if team has already accessed the system
+    const accessedTeams = JSON.parse(localStorage.getItem('accessedTeams') || '[]');
+    return accessedTeams.includes(teamId);
+  };
+
+  const markTeamAsAccessed = (teamId) => {
+    // Mark team as having accessed the system
+    const accessedTeams = JSON.parse(localStorage.getItem('accessedTeams') || '[]');
+    if (!accessedTeams.includes(teamId)) {
+      accessedTeams.push(teamId);
+      localStorage.setItem('accessedTeams', JSON.stringify(accessedTeams));
     }
   };
 
@@ -142,18 +175,27 @@ const RegistrationForm = () => {
       setLoading(true);
       
       try {
-        // Immediately navigate with optimistic UI - check registration in background
+        // STRICT ACCESS CONTROL: Check if team has already accessed the system
+        if (checkTeamAccessHistory(formData.teamId)) {
+          alert('🚫 ACCESS DENIED: Your team has already accessed this system. Each team can only access once and select one problem statement.');
+          setLoading(false);
+          return;
+        }
+
+        // STRICT REGISTRATION CHECK: Verify team hasn't registered for any problem
+        const isAlreadyRegistered = await checkTeamAlreadyRegistered(formData.teamId);
+        if (isAlreadyRegistered) {
+          alert('🚫 REGISTRATION BLOCKED: Your team has already registered for a problem statement. Each team can only register once.');
+          setLoading(false);
+          return;
+        }
+
+        // Mark team as having accessed the system (one-time access)
+        markTeamAsAccessed(formData.teamId);
+
+        // Navigate to problem selection
         const teamDataEncoded = btoa(JSON.stringify(formData));
         navigate(`/problems/${teamDataEncoded}`);
-        
-        // Background check (optional for extra validation)
-        checkTeamAlreadyRegistered(formData.teamId).then(isAlreadyRegistered => {
-          if (isAlreadyRegistered) {
-            console.log('Team already registered - will be handled in ProblemStatements component');
-          }
-        }).catch(error => {
-          console.error('Background registration check failed:', error);
-        });
         
       } catch (error) {
         console.error('Error during navigation:', error);
@@ -169,8 +211,23 @@ const RegistrationForm = () => {
         <div className="card shadow">
           <div className="card-body p-4">
             <h2 className="card-title text-center mb-4">🏆 Team Registration</h2>
+            
+            {/* 🚨 CRITICAL ACCESS WARNING */}
+            <div className="alert alert-warning border border-warning mb-4" role="alert">
+              <h5 className="alert-heading">⚠️ CRITICAL: ONE-TIME ACCESS ONLY</h5>
+              <p className="mb-1">
+                <strong>⛔ Each team can access this system ONLY ONCE!</strong>
+              </p>
+              <p className="mb-1">
+                <strong>🔒 Once you select a problem, you cannot return or change.</strong>
+              </p>
+              <p className="mb-0">
+                <strong>🎯 Choose your team carefully before proceeding!</strong>
+              </p>
+            </div>
+            
             <div className="alert alert-info text-center mb-4">
-              <strong>Select your registered team from the dropdown</strong>
+              <strong>📋 All {REGISTERED_TEAMS.length} teams are loaded. Select your registered team from dropdown.</strong>
             </div>
             
             <form onSubmit={handleSubmit}>
@@ -185,7 +242,7 @@ const RegistrationForm = () => {
                   onChange={handleChange}
                   className={`form-control ${errors.teamId ? 'is-invalid' : ''}`}
                 >
-                  <option value="">-- Choose your team --</option>
+                  <option value="">-- Choose your team (ONE-TIME ACCESS) --</option>
                   {REGISTERED_TEAMS.map(team => (
                     <option key={team.teamId} value={team.teamId}>
                       {team.teamId} - {team.teamName}
@@ -228,24 +285,35 @@ const RegistrationForm = () => {
                       placeholder="Team leader will auto-fill"
                     />
                   </div>
+
+                  {/* 🛡️ FINAL CONFIRMATION WARNING */}
+                  <div className="alert alert-danger mb-4" role="alert">
+                    <h6 className="alert-heading">🔒 FINAL WARNING</h6>
+                    <p className="mb-1">
+                      You are about to proceed as <strong>{formData.teamName}</strong>.
+                    </p>
+                    <p className="mb-0">
+                      <strong>❌ This action CANNOT be undone. Your team will be LOCKED from future access.</strong>
+                    </p>
+                  </div>
                 </>
               )}
 
               <button
                 type="submit"
-                className="btn btn-primary w-100"
+                className="btn btn-danger w-100"
                 disabled={loading || !formData.teamId}
                 style={{ minHeight: '50px', fontSize: '1.1rem' }}
               >
                 {loading ? (
                   <>
                     <span className="spinner-border spinner-border-sm me-2" role="status"></span>
-                    Processing...
+                    Processing One-Time Access...
                   </>
                 ) : (
                   <>
-                    <i className="fas fa-arrow-right me-2"></i>
-                    Continue to Problem Statements
+                    <i className="fas fa-lock me-2"></i>
+                    🚨 PROCEED TO PROBLEMS (ONE-TIME ONLY) 🚨
                   </>
                 )}
               </button>
