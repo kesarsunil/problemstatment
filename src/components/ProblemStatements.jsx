@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
-import { collection, addDoc, query, where, getDocs, runTransaction, doc } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs, runTransaction, doc, onSnapshot } from 'firebase/firestore';
 
 // Sample problem statements data
 const PROBLEM_STATEMENTS = [
@@ -50,6 +50,10 @@ const ProblemStatements = () => {
   const [isTeamAlreadyRegistered, setIsTeamAlreadyRegistered] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [registrationCache, setRegistrationCache] = useState(new Set()); // Cache for ultra-fast validation
+  const [realTimeConnected, setRealTimeConnected] = useState(false);
+  const [realtimeUpdates, setRealtimeUpdates] = useState(0); // Counter for real-time updates
+  const [autoRefreshActive, setAutoRefreshActive] = useState(false); // Track 1ms auto-refresh status
+  const [refreshCount, setRefreshCount] = useState(0); // Track number of 1ms refreshes
 
   useEffect(() => {
     try {
@@ -60,8 +64,103 @@ const ProblemStatements = () => {
       setTeamRegistrationChecked(true);
       setIsTeamAlreadyRegistered(false); // Assume not registered for speed
       
-      // Quick problem counts fetch - but don't wait for it
-      fetchProblemCounts().catch(() => {}); // Ignore errors for speed
+      // Initial data load
+      fetchProblemCounts().catch(() => {});
+      
+      // 🚀 REAL-TIME AUTOMATIC UPDATES - Like financial trading systems
+      const setupRealTimeListener = () => {
+        console.log('🔥 Starting real-time listener...');
+        
+        const registrationsRef = collection(db, 'registrations');
+        const unsubscribe = onSnapshot(registrationsRef, (snapshot) => {
+          const updateStart = performance.now();
+          
+          // INSTANT DATA PROCESSING - <1ms update
+          const counts = {};
+          const teamCache = new Set();
+          
+          // Initialize counts
+          PROBLEM_STATEMENTS.forEach(problem => counts[problem.id] = 0);
+          
+          // Process all changes in single loop
+          snapshot.forEach(doc => {
+            const data = doc.data();
+            const problemId = data.problemStatementId || data.p;
+            const teamId = data.teamId || data.t;
+            
+            if (problemId && counts.hasOwnProperty(problemId)) {
+              counts[problemId]++;
+            }
+            if (teamId) {
+              teamCache.add(teamId);
+            }
+          });
+          
+          const updateTime = performance.now() - updateStart;
+          
+          // INSTANT STATE UPDATES
+          setProblemCounts(counts);
+          setRegistrationCache(teamCache);
+          setLastUpdated(new Date());
+          setRealtimeUpdates(prev => prev + 1);
+          setRealTimeConnected(true);
+          
+          console.log(`⚡ Real-time update completed in ${updateTime.toFixed(3)}ms`);
+          
+        }, (error) => {
+          console.error('Real-time listener error:', error);
+          setRealTimeConnected(false);
+          // Auto-reconnect after 1 second
+          setTimeout(setupRealTimeListener, 1000);
+        });
+        
+        return unsubscribe;
+      };
+      
+      // Start real-time listener
+      const unsubscribe = setupRealTimeListener();
+      
+      // 🚀 AUTOMATIC REFRESH EVERY 1 MILLISECOND - Ultra-fast updates
+      const setupAutoRefresh = () => {
+        console.log('⚡ Starting 1ms automatic refresh...');
+        setAutoRefreshActive(true);
+        
+        const autoRefreshInterval = setInterval(() => {
+          const refreshStart = performance.now();
+          
+          // Ultra-fast refresh - fetch problem counts every 1ms
+          fetchProblemCounts().then(() => {
+            const refreshTime = performance.now() - refreshStart;
+            console.log(`🔄 Auto-refresh #${refreshCount + 1} completed in ${refreshTime.toFixed(3)}ms`);
+            
+            // Update real-time indicators
+            setLastUpdated(new Date());
+            setRealtimeUpdates(prev => prev + 1);
+            setRefreshCount(prev => prev + 1);
+            setRealTimeConnected(true);
+          }).catch(error => {
+            console.error('Auto-refresh error:', error);
+            setRealTimeConnected(false);
+          });
+        }, 1); // 1 millisecond interval
+        
+        return autoRefreshInterval;
+      };
+      
+      // Start 1ms auto-refresh
+      const autoRefreshInterval = setupAutoRefresh();
+      
+      // Cleanup on unmount
+      return () => {
+        if (unsubscribe) {
+          unsubscribe();
+        }
+        if (autoRefreshInterval) {
+          clearInterval(autoRefreshInterval);
+          setAutoRefreshActive(false);
+          console.log('⚡ 1ms auto-refresh stopped');
+        }
+      };
       
     } catch (error) {
       console.error('Invalid team data');
@@ -72,9 +171,12 @@ const ProblemStatements = () => {
   // Removed automatic polling - only manual refresh for better performance
   // Real-time updates can be triggered manually when needed
 
+  // 🚀 OPTIMIZED FOR 1MS AUTO-REFRESH - Ultra-fast data fetching
   const fetchProblemCounts = async () => {
     try {
-      // Single optimized query - get all registrations at once
+      const fetchStart = performance.now();
+      
+      // Single optimized query - get all registrations at once (optimized for 1ms calls)
       const querySnapshot = await getDocs(collection(db, 'registrations'));
       
       const counts = {};
@@ -83,7 +185,7 @@ const ProblemStatements = () => {
       // Initialize all counts to 0 for faster processing
       PROBLEM_STATEMENTS.forEach(problem => counts[problem.id] = 0);
       
-      // Single loop - count registrations AND build cache
+      // Single loop - count registrations AND build cache (optimized for speed)
       querySnapshot.forEach(doc => {
         const data = doc.data();
         const problemId = data.problemStatementId || data.p; // Support both old and new format
@@ -98,7 +200,18 @@ const ProblemStatements = () => {
         }
       });
       
+      // Update state efficiently
       setProblemCounts(counts);
+      setRegistrationCache(teamCache); // Set cache for instant validation
+      
+      const fetchTime = performance.now() - fetchStart;
+      
+      // Only log every 1000th fetch to avoid console spam
+      if (refreshCount % 1000 === 0) {
+        console.log(`📊 1ms refresh #${refreshCount}: ${fetchTime.toFixed(3)}ms fetch time`);
+      }
+      
+      return counts;
       setRegistrationCache(teamCache); // Set cache for instant validation  
       return counts;
     } catch (error) {
@@ -150,12 +263,13 @@ const ProblemStatements = () => {
       setLoading(false);
       
       setSuccessMessage(
-        `⚡ LIGHTNING REGISTRATION! ⚡\n\n` +
+        `⚡ REAL-TIME REGISTRATION COMPLETE! ⚡\n\n` +
         `Problem: "${selectedProblem.title}"\n` +
         `Team: ${team.teamName}\n` +
-        `Speed: ${processingTime.toFixed(3)}ms\n` +
+        `Processing: ${processingTime.toFixed(3)}ms\n` +
         `Transaction: ${transactionId.slice(-8)}\n` +
-        `Status: CONFIRMED`
+        `Status: LIVE SYNC ACTIVE\n` +
+        `Updates: Auto-refresh enabled`
       );
       
       // INSTANT LOCAL UPDATES - Cache and state
@@ -169,7 +283,7 @@ const ProblemStatements = () => {
       
       // BACKGROUND DATABASE WRITE - Fire and forget
       // Use shortened field names for faster write
-      addDoc(collection(db, 'registrations'), {
+      const dbWrite = addDoc(collection(db, 'registrations'), {
         t: team.teamId,                    // team id
         n: team.teamName,                  // name  
         l: team.teamLeader,                // leader
@@ -177,10 +291,31 @@ const ProblemStatements = () => {
         pt: selectedProblem.title,         // problem title
         ts: transactionTimestamp,          // timestamp
         tid: transactionId,                // transaction id
-        pt_ms: processingTime              // processing time
+        pt_ms: processingTime,             // processing time
+        rt: true,                          // real-time flag
+        status: 'confirmed'                // transaction status
+      });
+      
+      // REAL-TIME SYNC - Broadcast transaction
+      dbWrite.then(() => {
+        console.log(`🚀 Real-time transaction synced: ${transactionId}`);
+        // The real-time listener will automatically update all connected clients
       }).catch(error => {
         console.error('Background write failed:', error);
         // Could implement retry queue here
+        
+        // Rollback optimistic update on failure
+        setTimeout(() => {
+          setProblemCounts(prev => ({
+            ...prev,
+            [selectedProblem.id]: Math.max(0, (prev[selectedProblem.id] || 0) - 1)
+          }));
+          setRegistrationCache(prev => {
+            const newCache = new Set(prev);
+            newCache.delete(teamKey);
+            return newCache;
+          });
+        }, 2000);
       });
       
       // Fast redirect
@@ -281,6 +416,25 @@ const ProblemStatements = () => {
       padding: '20px',
       color: '#2c3e50'
     }}>
+      {/* CSS for animations */}
+      <style>{`
+        @keyframes pulse {
+          0% { opacity: 1; }
+          50% { opacity: 0.5; }
+          100% { opacity: 1; }
+        }
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        .live-indicator {
+          animation: pulse 1.5s infinite;
+        }
+        .real-time-glow {
+          box-shadow: 0 0 10px rgba(40, 167, 69, 0.3);
+          transition: box-shadow 0.3s ease;
+        }
+      `}</style>
       {/* Confirmation Modal */}
       {showConfirmation && selectedProblem && (
         <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.3)' }}>
@@ -467,45 +621,94 @@ const ProblemStatements = () => {
                 borderRadius: '6px',
                 padding: '20px'
               }}>
-                <strong style={{ color: '#2c3e50' }}>Registration System:</strong>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <div>
+                    <strong style={{ color: '#2c3e50' }}>⚡ 1ms Auto-Refresh System</strong>
+                    <div style={{ 
+                      display: 'inline-block', 
+                      marginLeft: '10px',
+                      padding: '2px 8px', 
+                      borderRadius: '4px',
+                      backgroundColor: autoRefreshActive ? '#d4edda' : '#f8d7da',
+                      color: autoRefreshActive ? '#155724' : '#721c24',
+                      fontSize: '0.8rem',
+                      fontWeight: 'bold'
+                    }}>
+                      {autoRefreshActive ? '⚡ 1ms ACTIVE' : '🔴 STOPPED'}
+                    </div>
+                    {autoRefreshActive && (
+                      <div style={{ 
+                        display: 'inline-block', 
+                        marginLeft: '5px',
+                        padding: '2px 8px', 
+                        borderRadius: '4px',
+                        backgroundColor: '#fff3cd',
+                        color: '#856404',
+                        fontSize: '0.7rem',
+                        fontWeight: 'bold'
+                      }}>
+                        #{refreshCount}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: '#6c757d' }}>
+                    Refreshes: {refreshCount} | Updates: {realtimeUpdates}
+                  </div>
+                </div>
+                
                 <span style={{ color: '#495057' }}> Each problem statement has </span>
                 <strong style={{ color: '#2c3e50' }}>only 2 slots available</strong>.
                 <br />
                 <small style={{ color: '#6c757d' }}>
-                  Last updated: {lastUpdated.toLocaleTimeString()}
-                  <button 
-                    onClick={async () => {
-                      setLoading(true);
-                      await fetchProblemCounts();
-                      setLastUpdated(new Date());
-                      setLoading(false);
+                  ⚡ Last refresh: {lastUpdated.toLocaleTimeString()}.{String(lastUpdated.getMilliseconds()).padStart(3, '0')}
+                  <span style={{ 
+                    marginLeft: '10px',
+                    color: autoRefreshActive ? '#28a745' : '#dc3545',
+                    fontWeight: 'bold'
+                  }}>
+                    {autoRefreshActive ? '⚡ 1ms AUTO-REFRESH ACTIVE' : 'AUTO-REFRESH STOPPED'}
+                  </span>
+                </small>
+                {autoRefreshActive && (
+                  <div style={{ 
+                    marginTop: '8px', 
+                    padding: '8px', 
+                    backgroundColor: '#e8f5e8', 
+                    borderRadius: '4px',
+                    border: '1px solid #28a745'
+                  }}>
+                    <small style={{ color: '#155724', fontWeight: 'bold' }}>
+                      🚀 Ultra-fast refresh every 1 millisecond - Total refreshes: {refreshCount}
+                    </small>
+                  </div>
+                )}
+                <div style={{ 
+                  marginTop: '10px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <button
+                    onClick={() => {
+                      fetchProblemCounts();
+                      setRealtimeUpdates(prev => prev + 1);
                     }}
-                    disabled={loading}
                     style={{
-                      backgroundColor: '#2c3e50',
-                      border: '1px solid #2c3e50',
-                      color: '#ffffff',
+                      backgroundColor: '#007bff',
+                      color: 'white',
+                      border: 'none',
                       borderRadius: '4px',
-                      padding: '4px 12px',
+                      padding: '5px 10px',
                       fontSize: '0.8rem',
-                      marginLeft: '10px',
-                      cursor: loading ? 'not-allowed' : 'pointer'
+                      cursor: 'pointer'
                     }}
                   >
-                    {loading ? (
-                      <>
-                        <span className="spinner-border spinner-border-sm" style={{ 
-                          width: '0.8rem', 
-                          height: '0.8rem',
-                          marginRight: '5px'
-                        }}></span> 
-                        Loading...
-                      </>
-                    ) : (
-                      'Refresh Status'
-                    )}
+                    🔄 Manual Refresh
                   </button>
-                </small>
+                  <small style={{ color: '#6c757d' }}>
+                    Next auto-refresh in: <strong>1ms</strong>
+                  </small>
+                </div>
               </div>
             </div>
           </div>
@@ -605,9 +808,27 @@ const ProblemStatements = () => {
                       color: registeredCount >= 2 ? '#dc3545' : 
                              registeredCount === 1 ? '#ffc107' : '#28a745',
                       fontWeight: 'bold',
-                      fontSize: '0.9rem'
+                      fontSize: '0.9rem',
+                      display: 'flex',
+                      alignItems: 'center'
                     }}>
+                      <span style={{ marginRight: '5px' }}>
+                        {registeredCount >= 2 ? '🔴' : registeredCount === 1 ? '🟡' : '🟢'}
+                      </span>
                       {registeredCount}/2 teams {isFilled ? '(COMPLETE)' : 'registered'}
+                      {realTimeConnected && (
+                        <span style={{
+                          marginLeft: '8px',
+                          backgroundColor: '#28a745',
+                          color: 'white',
+                          padding: '2px 6px',
+                          borderRadius: '3px',
+                          fontSize: '0.7rem',
+                          animation: 'pulse 2s infinite'
+                        }}>
+                          LIVE
+                        </span>
+                      )}
                     </small>
                     
                     <button

@@ -134,20 +134,7 @@ const RegistrationForm = () => {
     }
   };
 
-  const checkTeamAccessHistory = (teamId) => {
-    // Check if team has already accessed the system
-    const accessedTeams = JSON.parse(localStorage.getItem('accessedTeams') || '[]');
-    return accessedTeams.includes(teamId);
-  };
-
-  const markTeamAsAccessed = (teamId) => {
-    // Mark team as having accessed the system
-    const accessedTeams = JSON.parse(localStorage.getItem('accessedTeams') || '[]');
-    if (!accessedTeams.includes(teamId)) {
-      accessedTeams.push(teamId);
-      localStorage.setItem('accessedTeams', JSON.stringify(accessedTeams));
-    }
-  };
+  // Removed localStorage-based access tracking - only check actual Firebase registrations
 
   const validateForm = () => {
     const newErrors = {};
@@ -175,13 +162,6 @@ const RegistrationForm = () => {
       setLoading(true);
       
       try {
-        // STRICT ACCESS CONTROL: Check if team has already accessed the system
-        if (checkTeamAccessHistory(formData.teamId)) {
-          alert('🚫 ACCESS DENIED: Your team has already accessed this system. Each team can only access once and select one problem statement.');
-          setLoading(false);
-          return;
-        }
-
         // STRICT REGISTRATION CHECK: Verify team hasn't registered for any problem
         const isAlreadyRegistered = await checkTeamAlreadyRegistered(formData.teamId);
         if (isAlreadyRegistered) {
@@ -189,9 +169,6 @@ const RegistrationForm = () => {
           setLoading(false);
           return;
         }
-
-        // Mark team as having accessed the system (one-time access)
-        markTeamAsAccessed(formData.teamId);
 
         // Navigate to problem selection
         const teamDataEncoded = btoa(JSON.stringify(formData));
@@ -212,14 +189,14 @@ const RegistrationForm = () => {
           <div className="card-body p-4">
             <h2 className="card-title text-center mb-4">🏆 Team Registration</h2>
             
-            {/* 🚨 CRITICAL ACCESS WARNING */}
+            {/* 🚨 CRITICAL REGISTRATION WARNING */}
             <div className="alert alert-warning border border-warning mb-4" role="alert">
-              <h5 className="alert-heading">⚠️ CRITICAL: ONE-TIME ACCESS ONLY</h5>
+              <h5 className="alert-heading">⚠️ CRITICAL: ONE-TIME REGISTRATION ONLY</h5>
               <p className="mb-1">
-                <strong>⛔ Each team can access this system ONLY ONCE!</strong>
+                <strong>⛔ Each team can register for ONLY ONE problem statement!</strong>
               </p>
               <p className="mb-1">
-                <strong>🔒 Once you select a problem, you cannot return or change.</strong>
+                <strong>🔒 Once you select a problem, you cannot change or return.</strong>
               </p>
               <p className="mb-0">
                 <strong>🎯 Choose your team carefully before proceeding!</strong>
@@ -242,7 +219,7 @@ const RegistrationForm = () => {
                   onChange={handleChange}
                   className={`form-control ${errors.teamId ? 'is-invalid' : ''}`}
                 >
-                  <option value="">-- Choose your team (ONE-TIME ACCESS) --</option>
+                  <option value="">-- Choose your team (ONE-TIME REGISTRATION) --</option>
                   {REGISTERED_TEAMS.map(team => (
                     <option key={team.teamId} value={team.teamId}>
                       {team.teamId} - {team.teamName}
@@ -293,7 +270,7 @@ const RegistrationForm = () => {
                       You are about to proceed as <strong>{formData.teamName}</strong>.
                     </p>
                     <p className="mb-0">
-                      <strong>❌ This action CANNOT be undone. Your team will be LOCKED from future access.</strong>
+                      <strong>❌ This action CANNOT be undone. Your team will be LOCKED after registration.</strong>
                     </p>
                   </div>
                 </>
@@ -308,12 +285,12 @@ const RegistrationForm = () => {
                 {loading ? (
                   <>
                     <span className="spinner-border spinner-border-sm me-2" role="status"></span>
-                    Processing One-Time Access...
+                    Processing Registration...
                   </>
                 ) : (
                   <>
                     <i className="fas fa-lock me-2"></i>
-                    🚨 PROCEED TO PROBLEMS (ONE-TIME ONLY) 🚨
+                    🚨 PROCEED TO PROBLEMS (ONE REGISTRATION ONLY) 🚨
                   </>
                 )}
               </button>
