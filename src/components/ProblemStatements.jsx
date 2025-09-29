@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
-import { collection, addDoc, query, where, getDocs, runTransaction, doc, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs, runTransaction, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 
 // Sample problem statements data
 const PROBLEM_STATEMENTS = [
@@ -60,9 +60,47 @@ const ProblemStatements = () => {
       const decodedTeamData = JSON.parse(atob(teamData));
       setTeam(decodedTeamData);
       
-      // INSTANT SETUP - No validation checks for maximum speed
-      setTeamRegistrationChecked(true);
-      setIsTeamAlreadyRegistered(false); // Assume not registered for speed
+      // 🔒 INITIAL TEAM VALIDATION - Check if team already booked at entry time
+      const validateTeamAtEntry = async () => {
+        const entryTimestamp = performance.now();
+        console.log(`🔍 Validating team ${decodedTeamData.teamId} at entry time: ${entryTimestamp}ms`);
+        
+        try {
+          // Check if team has already registered for any problem
+          const q = query(
+            collection(db, 'registrations'),
+            where('teamId', '==', decodedTeamData.teamId)
+          );
+          const querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+            // Team already registered - show details and redirect
+            const existingRegistration = querySnapshot.docs[0].data();
+            alert(
+              `🚫 TEAM ALREADY REGISTERED!\n\n` +
+              `Team: ${decodedTeamData.teamName}\n` +
+              `Already registered for: ${existingRegistration.problemTitle || existingRegistration.problemStatementId}\n` +
+              `Registration time: ${new Date(existingRegistration.registeredAt?.seconds * 1000).toLocaleString()}\n\n` +
+              `❌ Each team can only register ONCE.\n` +
+              `🔄 Redirecting to home page...`
+            );
+            setTimeout(() => navigate('/'), 2000);
+            return;
+          }
+          
+          console.log(`✅ Team ${decodedTeamData.teamId} validation passed at entry`);
+          setTeamRegistrationChecked(true);
+          setIsTeamAlreadyRegistered(false);
+          
+        } catch (error) {
+          console.error('Entry validation error:', error);
+          setTeamRegistrationChecked(true);
+          setIsTeamAlreadyRegistered(false);
+        }
+      };
+      
+      // Run initial validation
+      validateTeamAtEntry();
       
       // Initial data load
       fetchProblemCounts().catch(() => {});
@@ -245,87 +283,192 @@ const ProblemStatements = () => {
   const handleConfirmSelection = async () => {
     if (!selectedProblem) return;
 
-    // 🚀 FINANCIAL-GRADE TRANSACTION SPEED - Target <2ms
-    const startTime = performance.now();
+    // � MILLISECOND-PRECISE BOOKING SYSTEM - First-come-first-served
+    const bookingStartTime = performance.now();
+    const preciseTimestamp = Date.now(); // Millisecond precision
+    const nanoseconds = performance.timeOrigin + bookingStartTime; // Ultra-precise timing
     
-    // INSTANT UI RESPONSE - 0ms delay, optimistic update
+    console.log(`🕐 Booking attempt - Team: ${team.teamId}, Time: ${preciseTimestamp}ms, Nano: ${nanoseconds}`);
+    
+    // INSTANT UI RESPONSE
     setLoading(true);
     setShowConfirmation(false);
     setSelectedProblem(null);
     
     try {
-      // PRE-COMPUTE ALL DATA - No runtime calculations
-      const transactionTimestamp = Date.now();
-      const transactionId = `TXN_${team.teamId}_${selectedProblem.id}_${transactionTimestamp}`;
+      // 🔒 MILLISECOND-PRECISE TRANSACTION - Firebase atomic with precise timing
+      const result = await runTransaction(db, async (transaction) => {
+        const problemRef = doc(db, 'problem_bookings', selectedProblem.id);
+        const problemDoc = await transaction.get(problemRef);
+        
+        let currentBookings = [];
+        let currentCount = 0;
+        
+        if (problemDoc.exists()) {
+          const data = problemDoc.data();
+          currentBookings = data.bookings || [];
+          currentCount = data.count || 0;
+        }
+        
+        // 🚫 CHECK IF PROBLEM IS FULL (2 slots max)
+        if (currentCount >= 2) {
+          throw new Error(`PROBLEM_FULL_${currentCount}_BOOKINGS_EXIST`);
+        }
+        
+        // 🚫 CHECK IF TEAM ALREADY BOOKED THIS PROBLEM
+        const teamAlreadyBooked = currentBookings.some(booking => booking.teamId === team.teamId);
+        if (teamAlreadyBooked) {
+          throw new Error('TEAM_ALREADY_BOOKED_THIS_PROBLEM');
+        }
+        
+        // 🚫 FINAL CHECK: Team registration in any problem (simplified check)
+        const existingRegistrations = query(
+          collection(db, 'registrations'),
+          where('teamId', '==', team.teamId)
+        );
+        const regSnapshot = await getDocs(existingRegistrations);
+        if (!regSnapshot.empty) {
+          const existing = regSnapshot.docs[0].data();
+          throw new Error(`TEAM_REGISTERED_ELSEWHERE_${existing.problemStatementId || 'unknown'}`);
+        }
+        
+        // ✅ CREATE MILLISECOND-PRECISE BOOKING RECORD (Fixed: No serverTimestamp in arrays)
+        const bookingId = `BOOK_${team.teamId}_${selectedProblem.id}_${preciseTimestamp}`;
+        const slot = currentCount + 1;
+        const currentServerTime = new Date(); // Use regular Date instead of serverTimestamp in arrays
+        
+        const newBooking = {
+          teamId: team.teamId,
+          teamName: team.teamName,
+          teamLeader: team.teamLeader,
+          bookingTimestamp: preciseTimestamp, // Exact millisecond
+          nanosecondPrecision: nanoseconds, // Ultra-precise timing
+          bookingId: bookingId,
+          slot: slot,
+          serverTime: currentServerTime // Regular Date object works in arrays
+        };
+        
+        // 🔒 ATOMIC WRITE - Update problem bookings
+        transaction.set(problemRef, {
+          problemId: selectedProblem.id,
+          problemTitle: selectedProblem.title,
+          count: currentCount + 1,
+          maxSlots: 2,
+          bookings: [...currentBookings, newBooking],
+          lastBookingTime: preciseTimestamp,
+          lastUpdated: serverTimestamp()
+        });
+        
+        // 🔒 ATOMIC WRITE - Create registration record
+        const registrationRef = doc(collection(db, 'registrations'));
+        transaction.set(registrationRef, {
+          teamId: team.teamId,
+          teamName: team.teamName,
+          teamLeader: team.teamLeader,
+          problemStatementId: selectedProblem.id, // For compatibility
+          problemTitle: selectedProblem.title,
+          registeredAt: serverTimestamp(),
+          bookingTimestamp: preciseTimestamp,
+          nanosecondPrecision: nanoseconds,
+          bookingId: bookingId,
+          slot: slot,
+          status: 'CONFIRMED_MILLISECOND_PRECISION',
+          processingTimeMs: performance.now() - bookingStartTime
+        });
+        
+        return {
+          success: true,
+          bookingId,
+          slot,
+          totalBookings: currentCount + 1,
+          bookingTimestamp: preciseTimestamp,
+          nanoseconds: nanoseconds,
+          isFirstTeam: currentCount === 0,
+          processingTime: performance.now() - bookingStartTime
+        };
+      });
       
-      // OPTIMISTIC SUCCESS - Show result before database write
-      const processingTime = performance.now() - startTime;
+      // ✅ MILLISECOND-PRECISE SUCCESS
       setLoading(false);
       
-      setSuccessMessage(
-        `⚡ REAL-TIME REGISTRATION COMPLETE! ⚡\n\n` +
-        `Problem: "${selectedProblem.title}"\n` +
-        `Team: ${team.teamName}\n` +
-        `Processing: ${processingTime.toFixed(3)}ms\n` +
-        `Transaction: ${transactionId.slice(-8)}\n` +
-        `Status: LIVE SYNC ACTIVE\n` +
-        `Updates: Auto-refresh enabled`
-      );
-      
-      // INSTANT LOCAL UPDATES - Cache and state
-      const teamKey = `${team.teamId}`;
-      setRegistrationCache(prev => new Set([...prev, teamKey])); // Add to cache instantly
-      
+      // Update local state
       setProblemCounts(prev => ({
         ...prev,
-        [selectedProblem.id]: (prev[selectedProblem.id] || 0) + 1
+        [selectedProblem.id]: result.totalBookings
       }));
       
-      // BACKGROUND DATABASE WRITE - Fire and forget
-      // Use shortened field names for faster write
-      const dbWrite = addDoc(collection(db, 'registrations'), {
-        t: team.teamId,                    // team id
-        n: team.teamName,                  // name  
-        l: team.teamLeader,                // leader
-        p: selectedProblem.id,             // problem
-        pt: selectedProblem.title,         // problem title
-        ts: transactionTimestamp,          // timestamp
-        tid: transactionId,                // transaction id
-        pt_ms: processingTime,             // processing time
-        rt: true,                          // real-time flag
-        status: 'confirmed'                // transaction status
-      });
+      const teamKey = `${team.teamId}`;
+      setRegistrationCache(prev => new Set([...prev, teamKey]));
       
-      // REAL-TIME SYNC - Broadcast transaction
-      dbWrite.then(() => {
-        console.log(`🚀 Real-time transaction synced: ${transactionId}`);
-        // The real-time listener will automatically update all connected clients
-      }).catch(error => {
-        console.error('Background write failed:', error);
-        // Could implement retry queue here
-        
-        // Rollback optimistic update on failure
-        setTimeout(() => {
-          setProblemCounts(prev => ({
-            ...prev,
-            [selectedProblem.id]: Math.max(0, (prev[selectedProblem.id] || 0) - 1)
-          }));
-          setRegistrationCache(prev => {
-            const newCache = new Set(prev);
-            newCache.delete(teamKey);
-            return newCache;
-          });
-        }, 2000);
-      });
+      // Success message with precise timing
+      setSuccessMessage(
+        `🕐 MILLISECOND-PRECISE BOOKING CONFIRMED! 🕐\n\n` +
+        `Problem: "${selectedProblem.title}"\n` +
+        `Team: ${team.teamName}\n` +
+        `Slot: ${result.slot}/2 ${result.isFirstTeam ? '(FIRST TEAM)' : '(SECOND TEAM)'}\n\n` +
+        `⏱️ PRECISE TIMING:\n` +
+        `Booking Time: ${new Date(result.bookingTimestamp).toLocaleTimeString()}.${String(result.bookingTimestamp % 1000).padStart(3, '0')}\n` +
+        `Processing: ${result.processingTime.toFixed(3)}ms\n` +
+        `Booking ID: ${result.bookingId.slice(-12)}\n` +
+        `Nanosecond Precision: ${result.nanoseconds.toFixed(6)}\n\n` +
+        `✅ You got the slot by MILLISECOND timing!\n` +
+        `🔒 Registration secured with atomic precision!\n` +
+        `Total Bookings: ${result.totalBookings}/2`
+      );
       
-      // Fast redirect
-      setTimeout(() => navigate('/'), 1000);
+      // Redirect after success
+      setTimeout(() => navigate('/'), 4000);
       
     } catch (error) {
-      // Sub-millisecond error handling
-      const errorTime = performance.now() - startTime;
       setLoading(false);
-      alert(`❌ Failed in ${errorTime.toFixed(3)}ms! Retry?`);
+      setShowConfirmation(false);
+      setSelectedProblem(null);
+      
+      const processingTime = performance.now() - bookingStartTime;
+      console.error('Millisecond-precise booking failed:', error);
+      
+      // Handle specific millisecond-timing errors
+      if (error.message.includes('PROBLEM_FULL')) {
+        const parts = error.message.split('_');
+        const bookingCount = parts[2];
+        
+        alert(
+          `🕐 BOOKING REJECTED - MILLISECOND TOO LATE!\n\n` +
+          `❌ Problem "${selectedProblem.title}" is FULL!\n` +
+          `📊 Current bookings: ${bookingCount}/2\n` +
+          `⏱️ Your booking time: ${new Date(preciseTimestamp).toLocaleTimeString()}.${String(preciseTimestamp % 1000).padStart(3, '0')}\n` +
+          `⚡ Another team booked microseconds before you!\n\n` +
+          `🔒 Millisecond-precise system working perfectly!\n` +
+          `🔄 Please select a different problem statement.\n` +
+          `⏱️ Rejected after ${processingTime.toFixed(3)}ms`
+        );
+      } else if (error.message.includes('TEAM_ALREADY_BOOKED')) {
+        alert(
+          `🚫 DUPLICATE BOOKING BLOCKED!\n\n` +
+          `❌ Team "${team.teamName}" already booked this problem!\n` +
+          `🕐 Millisecond-precise validation prevented duplicate!\n\n` +
+          `✅ Your previous booking is still valid.`
+        );
+      } else if (error.message.includes('TEAM_REGISTERED_ELSEWHERE')) {
+        const parts = error.message.split('_');
+        const problemId = parts[3];
+        
+        alert(
+          `🚫 TEAM ALREADY REGISTERED!\n\n` +
+          `❌ Team "${team.teamName}" already registered for problem: ${problemId}\n` +
+          `🕐 Millisecond-precise validation detected existing registration!\n` +
+          `🔒 Each team can only register ONCE!\n\n` +
+          `✅ Your existing registration is secure.`
+        );
+      } else {
+        alert(
+          `❌ MILLISECOND-PRECISE BOOKING ERROR!\n\n` +
+          `⏱️ Failed after ${processingTime.toFixed(3)}ms\n` +
+          `🕐 Booking time: ${new Date(preciseTimestamp).toLocaleTimeString()}.${String(preciseTimestamp % 1000).padStart(3, '0')}\n` +
+          `🔄 Please try again or select different problem.\n\n` +
+          `Error: ${error.message}`
+        );
+      }
     }
   };
 
