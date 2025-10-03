@@ -197,17 +197,48 @@ const ProblemStatements = () => {
       setShowConfirmation(false);
       setSelectedProblem(null);
 
-      // Check if problem is full (LIMIT: 1 team per problem)
-      const currentCount = problemCounts[selectedProblem.id] || 0;
-      if (currentCount >= 1) {
-        alert(`❌ Registration failed! Problem "${selectedProblem.title}" is already taken (${currentCount}/1 teams registered). Only 1 team allowed per problem statement.`);
+      // FRESH CHECK: Get real-time registration count from Firebase (not cached data)
+      const registrationsRef = collection(db, 'registrations');
+      const problemQuery = query(registrationsRef, where('problemStatementId', '==', selectedProblem.id));
+      const freshCheck = await getDocs(problemQuery);
+      
+      console.log(`🔍 FRESH CHECK - Current registrations for problem ${selectedProblem.id}:`, freshCheck.size);
+      
+      if (freshCheck.size >= 2) {
+        const registeredTeams = [];
+        freshCheck.forEach(doc => {
+          const data = doc.data();
+          registeredTeams.push(data.teamName);
+        });
+        
+        alert(
+          `❌ PROBLEM STATEMENT FULL!\n\n` +
+          `Problem "${selectedProblem.title}" is now FULL (${freshCheck.size}/2 teams).\n\n` +
+          `Registered teams:\n` +
+          `• ${registeredTeams.join('\n• ')}\n\n` +
+          `🚫 Maximum 2 teams per problem statement.\n` +
+          `🎯 Please select a different available problem.`
+        );
         setLoading(false);
         return;
       }
 
-      // Check if team already registered
-      if (registrationCache.has(team.teamId)) {
-        alert('❌ Registration failed! Your team is already registered for a problem statement.');
+      // FRESH CHECK: Verify team hasn't registered elsewhere (real-time check)
+      const teamQuery = query(registrationsRef, where('teamId', '==', team.teamId));
+      const teamCheck = await getDocs(teamQuery);
+      
+      console.log(`🔍 FRESH CHECK - Team check for ${team.teamId}:`, teamCheck.size);
+      
+      if (!teamCheck.empty) {
+        const existingRegistration = teamCheck.docs[0].data();
+        alert(
+          `🚫 TEAM ALREADY REGISTERED!\n\n` +
+          `Your team "${team.teamName}" is already registered for:\n` +
+          `"${existingRegistration.problemTitle}"\n\n` +
+          `❌ Each team can only register ONCE.\n` +
+          `🔄 Redirecting to home page...`
+        );
+        setTimeout(() => navigate('/'), 2000);
         setLoading(false);
         return;
       }
@@ -226,13 +257,14 @@ const ProblemStatements = () => {
         
         console.log(`🔍 ATOMIC CHECK - Current registrations for problem ${selectedProblem.id}:`, currentRegistrations.size);
         
-        // RACE CONDITION PROTECTION: Check if problem is full
-        if (currentRegistrations.size >= 1) {
+        // RACE CONDITION PROTECTION: Check if problem is full (2 teams maximum)
+        if (currentRegistrations.size >= 2) {
           const registeredTeams = [];
           currentRegistrations.forEach(doc => {
-            registeredTeams.push(doc.data().teamName);
+            const data = doc.data();
+            registeredTeams.push(`${data.teamName} (registered: ${new Date(data.registrationTimestamp).toLocaleTimeString()})`);
           });
-          throw new Error(`RACE_CONDITION_REJECTED: Problem "${selectedProblem.title}" is already taken by: ${registeredTeams.join(', ')}. Only 1 team allowed per problem. Please select another problem quickly!`);
+          throw new Error(`RACE_CONDITION_REJECTED: Problem "${selectedProblem.title}" is now FULL! Already registered teams: ${registeredTeams.join(', ')}. Maximum 2 teams per problem. Please choose another problem immediately!`);
         }
 
         // ATOMIC CHECK: Verify team hasn't registered elsewhere
@@ -302,13 +334,16 @@ const ProblemStatements = () => {
         isRaceCondition = true;
         const cleanMessage = error.message.replace('RACE_CONDITION_REJECTED: ', '');
         errorMessage = 
-          `🏃‍♂️ RACE CONDITION DETECTED!\n\n` +
+          `🏃‍♂️ REGISTRATION LIMIT REACHED!\n\n` +
           `⚡ ${cleanMessage}\n\n` +
-          `🎯 ACTION REQUIRED:\n` +
-          `• This problem was taken by another team who submitted faster\n` +
-          `• Please select a different problem statement immediately\n` +
-          `• First team to submit wins when multiple teams compete\n\n` +
-          `⏱️ Speed matters in registration!`;
+          `🎯 WHAT HAPPENED:\n` +
+          `• While you were registering, the 2-team limit was reached\n` +
+          `• Another team submitted just milliseconds before you\n` +
+          `• Maximum 2 teams allowed per problem statement\n\n` +
+          `🚀 NEXT STEPS:\n` +
+          `• Choose a different available problem immediately\n` +
+          `• Speed matters - first 2 teams win each problem!\n\n` +
+          `⏱️ Timing is everything in hackathons!`;
         
       } else if (error.message.includes('TEAM_ALREADY_REGISTERED')) {
         const cleanMessage = error.message.replace('TEAM_ALREADY_REGISTERED: ', '');
