@@ -1,46 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
-import { collection, addDoc, query, where, getDocs, runTransaction, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
-
-// Sample problem statements data
-const PROBLEM_STATEMENTS = [
-  {
-    id: 'ps1',
-    title: 'Smart Traffic Management System',
-    description: 'Develop an AI-powered system to optimize traffic flow in urban areas using real-time data analysis and predictive modeling.'
-  },
-  {
-    id: 'ps2',
-    title: 'Sustainable Energy Monitor',
-    description: 'Create a IoT-based solution to monitor and optimize energy consumption in residential and commercial buildings.'
-  },
-  {
-    id: 'ps3',
-    title: 'Healthcare Data Analytics',
-    description: 'Build a platform to analyze patient data for early disease detection and personalized treatment recommendations.'
-  },
-  {
-    id: 'ps4',
-    title: 'Agricultural Automation',
-    description: 'Design an automated farming system using drones and sensors for crop monitoring and precision agriculture.'
-  },
-  {
-    id: 'ps5',
-    title: 'Financial Fraud Detection',
-    description: 'Develop a machine learning model to detect fraudulent transactions in real-time banking systems.'
-  },
-  {
-    id: 'ps6',
-    title: 'Educational Learning Assistant',
-    description: 'Create an AI-powered learning assistant that adapts to individual student needs and learning patterns.'
-  }
-];
+import { collection, addDoc, query, where, getDocs, runTransaction, doc, onSnapshot, serverTimestamp, orderBy } from 'firebase/firestore';
 
 const ProblemStatements = () => {
   const { teamData } = useParams();
   const navigate = useNavigate();
   const [team, setTeam] = useState(null);
+  const [problemStatements, setProblemStatements] = useState([]); // Dynamic problem statements from Firebase
   const [problemCounts, setProblemCounts] = useState({});
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
@@ -49,24 +16,97 @@ const ProblemStatements = () => {
   const [teamRegistrationChecked, setTeamRegistrationChecked] = useState(false);
   const [isTeamAlreadyRegistered, setIsTeamAlreadyRegistered] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(new Date());
-  const [registrationCache, setRegistrationCache] = useState(new Set()); // Cache for ultra-fast validation
+  const [registrationCache, setRegistrationCache] = useState(new Set());
   const [realTimeConnected, setRealTimeConnected] = useState(false);
-  const [realtimeUpdates, setRealtimeUpdates] = useState(0); // Counter for real-time updates
-  const [autoRefreshActive, setAutoRefreshActive] = useState(false); // Track 1ms auto-refresh status
-  const [refreshCount, setRefreshCount] = useState(0); // Track number of 1ms refreshes
+  const [realtimeUpdates, setRealtimeUpdates] = useState(0);
+
+  // 📋 FETCH PROBLEM STATEMENTS FROM FIREBASE
+  const fetchProblemStatements = async () => {
+    try {
+      const q = query(
+        collection(db, 'problem_statements'),
+        orderBy('createdAt', 'desc')
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const problems = [];
+      
+      querySnapshot.forEach((doc) => {
+        problems.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+      
+      // Sort by problem number (1, 2, 3, 4, 5, 6, 7, 8)
+      problems.sort((a, b) => {
+        if (a.number && b.number) {
+          return parseInt(a.number) - parseInt(b.number);
+        }
+        return 0; // Keep original order if no numbers
+      });
+      
+      setProblemStatements(problems);
+      console.log(`📋 Loaded ${problems.length} problem statements from Firebase (sorted by number)`);
+      
+    } catch (error) {
+      console.error('Error fetching problem statements:', error);
+      setProblemStatements([]);
+    }
+  };
+
+  // 🚀 FETCH PROBLEM COUNTS
+  const fetchProblemCounts = async () => {
+    try {
+      if (problemStatements.length === 0) {
+        console.log('⏳ Problem statements not loaded yet, skipping count fetch');
+        return;
+      }
+
+      const querySnapshot = await getDocs(collection(db, 'registrations'));
+      const counts = {};
+      const teamCache = new Set();
+      
+      // Initialize all counts to 0
+      problemStatements.forEach(problem => counts[problem.id] = 0);
+      
+      // Count registrations
+      querySnapshot.forEach(doc => {
+        const data = doc.data();
+        const problemId = data.problemStatementId;
+        const teamId = data.teamId;
+        
+        if (problemId && counts.hasOwnProperty(problemId)) {
+          counts[problemId]++;
+        }
+        
+        if (teamId) {
+          teamCache.add(teamId);
+        }
+      });
+      
+      setProblemCounts(counts);
+      setRegistrationCache(teamCache);
+      setLastUpdated(new Date());
+      
+    } catch (error) {
+      console.error('Error fetching problem counts:', error);
+    }
+  };
 
   useEffect(() => {
     try {
       const decodedTeamData = JSON.parse(atob(teamData));
       setTeam(decodedTeamData);
       
-      // 🔒 INITIAL TEAM VALIDATION - Check if team already booked at entry time
-      const validateTeamAtEntry = async () => {
-        const entryTimestamp = performance.now();
-        console.log(`🔍 Validating team ${decodedTeamData.teamId} at entry time: ${entryTimestamp}ms`);
-        
+      // Load problem statements and setup real-time updates
+      fetchProblemStatements().then(() => {
+        fetchProblemCounts();
+      });
+      
+      // Check if team already registered
+      const checkTeamRegistration = async () => {
         try {
-          // Check if team has already registered for any problem
           const q = query(
             collection(db, 'registrations'),
             where('teamId', '==', decodedTeamData.teamId)
@@ -74,13 +114,11 @@ const ProblemStatements = () => {
           const querySnapshot = await getDocs(q);
           
           if (!querySnapshot.empty) {
-            // Team already registered - show details and redirect
             const existingRegistration = querySnapshot.docs[0].data();
             alert(
               `🚫 TEAM ALREADY REGISTERED!\n\n` +
               `Team: ${decodedTeamData.teamName}\n` +
-              `Already registered for: ${existingRegistration.problemTitle || existingRegistration.problemStatementId}\n` +
-              `Registration time: ${new Date(existingRegistration.registeredAt?.seconds * 1000).toLocaleString()}\n\n` +
+              `Already registered for: ${existingRegistration.problemTitle}\n\n` +
               `❌ Each team can only register ONCE.\n` +
               `🔄 Redirecting to home page...`
             );
@@ -88,117 +126,17 @@ const ProblemStatements = () => {
             return;
           }
           
-          console.log(`✅ Team ${decodedTeamData.teamId} validation passed at entry`);
           setTeamRegistrationChecked(true);
           setIsTeamAlreadyRegistered(false);
           
         } catch (error) {
-          console.error('Entry validation error:', error);
+          console.error('Team registration check error:', error);
           setTeamRegistrationChecked(true);
           setIsTeamAlreadyRegistered(false);
         }
       };
       
-      // Run initial validation
-      validateTeamAtEntry();
-      
-      // Initial data load
-      fetchProblemCounts().catch(() => {});
-      
-      // 🚀 REAL-TIME AUTOMATIC UPDATES - Like financial trading systems
-      const setupRealTimeListener = () => {
-        console.log('🔥 Starting real-time listener...');
-        
-        const registrationsRef = collection(db, 'registrations');
-        const unsubscribe = onSnapshot(registrationsRef, (snapshot) => {
-          const updateStart = performance.now();
-          
-          // INSTANT DATA PROCESSING - <1ms update
-          const counts = {};
-          const teamCache = new Set();
-          
-          // Initialize counts
-          PROBLEM_STATEMENTS.forEach(problem => counts[problem.id] = 0);
-          
-          // Process all changes in single loop
-          snapshot.forEach(doc => {
-            const data = doc.data();
-            const problemId = data.problemStatementId || data.p;
-            const teamId = data.teamId || data.t;
-            
-            if (problemId && counts.hasOwnProperty(problemId)) {
-              counts[problemId]++;
-            }
-            if (teamId) {
-              teamCache.add(teamId);
-            }
-          });
-          
-          const updateTime = performance.now() - updateStart;
-          
-          // INSTANT STATE UPDATES
-          setProblemCounts(counts);
-          setRegistrationCache(teamCache);
-          setLastUpdated(new Date());
-          setRealtimeUpdates(prev => prev + 1);
-          setRealTimeConnected(true);
-          
-          console.log(`⚡ Real-time update completed in ${updateTime.toFixed(3)}ms`);
-          
-        }, (error) => {
-          console.error('Real-time listener error:', error);
-          setRealTimeConnected(false);
-          // Auto-reconnect after 1 second
-          setTimeout(setupRealTimeListener, 1000);
-        });
-        
-        return unsubscribe;
-      };
-      
-      // Start real-time listener
-      const unsubscribe = setupRealTimeListener();
-      
-      // 🚀 AUTOMATIC REFRESH EVERY 1 MILLISECOND - Ultra-fast updates
-      const setupAutoRefresh = () => {
-        console.log('⚡ Starting 1ms automatic refresh...');
-        setAutoRefreshActive(true);
-        
-        const autoRefreshInterval = setInterval(() => {
-          const refreshStart = performance.now();
-          
-          // Ultra-fast refresh - fetch problem counts every 1ms
-          fetchProblemCounts().then(() => {
-            const refreshTime = performance.now() - refreshStart;
-            console.log(`🔄 Auto-refresh #${refreshCount + 1} completed in ${refreshTime.toFixed(3)}ms`);
-            
-            // Update real-time indicators
-            setLastUpdated(new Date());
-            setRealtimeUpdates(prev => prev + 1);
-            setRefreshCount(prev => prev + 1);
-            setRealTimeConnected(true);
-          }).catch(error => {
-            console.error('Auto-refresh error:', error);
-            setRealTimeConnected(false);
-          });
-        }, 1); // 1 millisecond interval
-        
-        return autoRefreshInterval;
-      };
-      
-      // Start 1ms auto-refresh
-      const autoRefreshInterval = setupAutoRefresh();
-      
-      // Cleanup on unmount
-      return () => {
-        if (unsubscribe) {
-          unsubscribe();
-        }
-        if (autoRefreshInterval) {
-          clearInterval(autoRefreshInterval);
-          setAutoRefreshActive(false);
-          console.log('⚡ 1ms auto-refresh stopped');
-        }
-      };
+      checkTeamRegistration();
       
     } catch (error) {
       console.error('Invalid team data');
@@ -206,212 +144,178 @@ const ProblemStatements = () => {
     }
   }, [teamData, navigate]);
 
-  // Removed automatic polling - only manual refresh for better performance
-  // Real-time updates can be triggered manually when needed
-
-  // 🚀 OPTIMIZED FOR 1MS AUTO-REFRESH - Ultra-fast data fetching
-  const fetchProblemCounts = async () => {
-    try {
-      const fetchStart = performance.now();
+  // Update problem counts when problem statements change
+  useEffect(() => {
+    if (problemStatements.length > 0) {
+      fetchProblemCounts();
       
-      // Single optimized query - get all registrations at once (optimized for 1ms calls)
-      const querySnapshot = await getDocs(collection(db, 'registrations'));
-      
-      const counts = {};
-      const teamCache = new Set();
-      
-      // Initialize all counts to 0 for faster processing
-      PROBLEM_STATEMENTS.forEach(problem => counts[problem.id] = 0);
-      
-      // Single loop - count registrations AND build cache (optimized for speed)
-      querySnapshot.forEach(doc => {
-        const data = doc.data();
-        const problemId = data.problemStatementId || data.p; // Support both old and new format
-        const teamId = data.teamId || data.t;
+      // Setup real-time listener
+      const registrationsRef = collection(db, 'registrations');
+      const unsubscribe = onSnapshot(registrationsRef, (snapshot) => {
+        const counts = {};
+        const teamCache = new Set();
         
-        if (problemId && counts.hasOwnProperty(problemId)) {
-          counts[problemId]++;
-        }
+        problemStatements.forEach(problem => counts[problem.id] = 0);
         
-        if (teamId) {
-          teamCache.add(teamId); // Build registration cache
-        }
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          const problemId = data.problemStatementId;
+          const teamId = data.teamId;
+          
+          if (problemId && counts.hasOwnProperty(problemId)) {
+            counts[problemId]++;
+          }
+          if (teamId) {
+            teamCache.add(teamId);
+          }
+        });
+        
+        setProblemCounts(counts);
+        setRegistrationCache(teamCache);
+        setLastUpdated(new Date());
+        setRealtimeUpdates(prev => prev + 1);
+        setRealTimeConnected(true);
       });
       
-      // Update state efficiently
-      setProblemCounts(counts);
-      setRegistrationCache(teamCache); // Set cache for instant validation
-      
-      const fetchTime = performance.now() - fetchStart;
-      
-      // Only log every 1000th fetch to avoid console spam
-      if (refreshCount % 1000 === 0) {
-        console.log(`📊 1ms refresh #${refreshCount}: ${fetchTime.toFixed(3)}ms fetch time`);
-      }
-      
-      return counts;
-      setRegistrationCache(teamCache); // Set cache for instant validation  
-      return counts;
-    } catch (error) {
-      console.error('Error fetching problem counts:', error);
-      return {};
+      return () => unsubscribe();
     }
-  };
+  }, [problemStatements]);
 
-
-  const handleSelectProblem = async (problemStatement) => {
-    // INSTANT VALIDATION - Check cache in <0.1ms
-    const teamKey = `${team.teamId}`;
-    const problemKey = `${problemStatement.id}`;
-    
-    // Ultra-fast cache checks
-    if (registrationCache.has(teamKey)) {
-      alert('⚡ Team already registered! (Instant cache check)');
-      return;
-    }
-    
-    const currentCount = problemCounts[problemStatement.id] || 0;
-    if (currentCount >= 2) {
-      alert('⚡ Problem statement full! (Instant count check)');
-      return;
-    }
-    
-    setSelectedProblem(problemStatement);
+  const handleProblemSelect = (problem) => {
+    setSelectedProblem(problem);
     setShowConfirmation(true);
   };
 
   const handleConfirmSelection = async () => {
-    if (!selectedProblem) return;
+    if (!selectedProblem || !team) {
+      alert('Please select a problem statement first.');
+      return;
+    }
 
-    // � MILLISECOND-PRECISE BOOKING SYSTEM - First-come-first-served
-    const bookingStartTime = performance.now();
-    const preciseTimestamp = Date.now(); // Millisecond precision
-    const nanoseconds = performance.timeOrigin + bookingStartTime; // Ultra-precise timing
-    
-    console.log(`🕐 Booking attempt - Team: ${team.teamId}, Time: ${preciseTimestamp}ms, Nano: ${nanoseconds}`);
-    
-    // INSTANT UI RESPONSE
-    setLoading(true);
-    setShowConfirmation(false);
-    setSelectedProblem(null);
-    
     try {
-      // 🔒 SIMPLIFIED TRANSACTION - No complex Firebase operations
-      const result = await runTransaction(db, async (transaction) => {
-        // Check existing registrations first
-        const registrationsRef = collection(db, 'registrations');
-        const teamQuery = query(registrationsRef, where('teamId', '==', team.teamId));
-        const existingRegs = await getDocs(teamQuery);
-        
-        if (!existingRegs.empty) {
-          throw new Error('TEAM_ALREADY_REGISTERED');
-        }
-        
-        // Simple registration without complex bookings
-        const regRef = doc(collection(db, 'registrations'));
-        const registrationData = {
-          teamId: team.teamId,
-          teamName: team.teamName,
-          teamLeader: team.teamLeader,
-          problemStatementId: selectedProblem.id,
-          problemTitle: selectedProblem.title,
-          bookingTime: preciseTimestamp,
-          status: 'CONFIRMED'
-        };
-        
-        transaction.set(regRef, registrationData);
-        
-        return {
-          success: true,
-          bookingTime: preciseTimestamp,
-          processingTime: performance.now() - bookingStartTime
-        };
-      });
+      setLoading(true);
+      setShowConfirmation(false);
+      setSelectedProblem(null);
+
+      // Check if problem is full
+      const currentCount = problemCounts[selectedProblem.id] || 0;
+      if (currentCount >= 2) {
+        alert(`❌ Registration failed! Problem "${selectedProblem.title}" is already full (${currentCount}/2 teams registered).`);
+        setLoading(false);
+        return;
+      }
+
+      // Check if team already registered
+      if (registrationCache.has(team.teamId)) {
+        alert('❌ Registration failed! Your team is already registered for a problem statement.');
+        setLoading(false);
+        return;
+      }
+
+      // Register the team using simple addDoc (more reliable than transactions)
+      console.log('🚀 Starting registration process...');
+      console.log('Team:', team);
+      console.log('Selected Problem:', selectedProblem);
       
-      // ✅ SUCCESS
-      setLoading(false);
+      // Final checks before registration
+      const registrationsRef = collection(db, 'registrations');
       
-      // Update local state
+      // Check current registrations for this problem
+      const currentRegistrations = await getDocs(query(registrationsRef, where('problemStatementId', '==', selectedProblem.id)));
+      console.log(`Current registrations for problem ${selectedProblem.id}:`, currentRegistrations.size);
+      
+      if (currentRegistrations.size >= 2) {
+        throw new Error(`Problem is full - ${currentRegistrations.size} teams already registered`);
+      }
+
+      // Check for duplicate team registration
+      const teamCheck = await getDocs(query(registrationsRef, where('teamId', '==', team.teamId)));
+      console.log(`Team check for ${team.teamId}:`, teamCheck.size);
+      
+      if (!teamCheck.empty) {
+        throw new Error('Team already registered');
+      }
+
+      // Create registration data
+      const registrationData = {
+        problemStatementId: selectedProblem.id, // Now will be numeric (1, 2, 3, etc.)
+        problemNumber: selectedProblem.number || selectedProblem.id, // Store the problem number
+        problemTitle: selectedProblem.title,
+        teamId: team.teamId,
+        teamName: team.teamName,
+        teamLeader: team.teamLeader,
+        teamMembers: 5, // Set to constant 5 members
+        memberDetails: team.memberDetails || [],
+        registeredAt: serverTimestamp(),
+        timestamp: serverTimestamp(), // Add both for compatibility
+        status: 'CONFIRMED'
+      };
+      
+      console.log('Registration data:', registrationData);
+
+      // Add registration document
+      const docRef = await addDoc(registrationsRef, registrationData);
+      console.log('Registration successful! Document ID:', docRef.id);
+      
+      const result = { success: true, id: docRef.id };
+      
+      // Update local cache immediately
+      setRegistrationCache(prev => new Set([...prev, team.teamId]));
       setProblemCounts(prev => ({
         ...prev,
         [selectedProblem.id]: (prev[selectedProblem.id] || 0) + 1
       }));
       
-      setRegistrationCache(prev => new Set([...prev, team.teamId]));
-      
-      // Simple success message
       setSuccessMessage(
-        `✅ BOOKING CONFIRMED!\n\n` +
-        `Problem: "${selectedProblem.title}"\n` +
-        `Team: ${team.teamName}\n` +
-        `Time: ${new Date(result.bookingTime).toLocaleTimeString()}\n` +
-        `Processing: ${result.processingTime.toFixed(2)}ms\n\n` +
-        `Registration successful!`
+        `🎉 REGISTRATION SUCCESS!\n\n` +
+        `✅ Team "${team.teamName}" registered for "${selectedProblem.title}"\n\n` +
+        `Registration completed successfully!`
       );
       
-      // Redirect after success
       setTimeout(() => navigate('/'), 3000);
       
     } catch (error) {
-      setLoading(false);
-      setShowConfirmation(false);
-      setSelectedProblem(null);
+      console.error('Registration error:', error);
+      console.error('Error details:', error.message);
+      console.error('Error code:', error.code);
       
-      const processingTime = performance.now() - bookingStartTime;
-      console.error('Booking failed:', error.message);
+      let errorMessage = '❌ Registration failed! ';
       
-      // Simple error handling
-      if (error.message.includes('TEAM_ALREADY_REGISTERED')) {
-        alert(
-          `🚫 TEAM ALREADY REGISTERED!\n\n` +
-          `Your team is already registered.\n` +
-          `Each team can only register once!`
-        );
+      if (error.message.includes('full')) {
+        errorMessage += 'This problem statement is now full.';
+      } else if (error.message.includes('already registered')) {
+        errorMessage += 'Your team is already registered.';
+      } else if (error.code === 'permission-denied') {
+        errorMessage += 'Permission denied. Please check Firebase security rules.';
+      } else if (error.code === 'unavailable') {
+        errorMessage += 'Service temporarily unavailable. Please try again.';
+      } else if (error.message.includes('network')) {
+        errorMessage += 'Network error. Please check your internet connection.';
       } else {
-        alert(
-          `❌ BOOKING ERROR!\n\n` +
-          `Failed after ${processingTime.toFixed(2)}ms\n` +
-          `Error: ${error.message}\n\n` +
-          `Please try again.`
-        );
+        errorMessage += `Please try again. Error: ${error.message}`;
       }
+      
+      alert(errorMessage);
+      setLoading(false);
     }
   };
 
-  const handleCancelSelection = () => {
-    setShowConfirmation(false);
-    setSelectedProblem(null);
-  };
-
-  if (!team || !teamRegistrationChecked) {
+  if (!teamRegistrationChecked) {
     return (
-      <div style={{
-        backgroundColor: '#ffffff',
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center'
-      }}>
-        <div style={{
-          textAlign: 'center',
-          padding: '40px',
-          backgroundColor: '#f8f9fa',
-          border: '2px solid #2c3e50',
-          borderRadius: '8px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
-        }}>
-          <div style={{
-            width: '40px',
-            height: '40px',
-            border: '4px solid #2c3e50',
-            borderTop: '4px solid transparent',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-            margin: '0 auto 15px'
-          }}></div>
-          <p style={{ color: '#2c3e50', fontWeight: 'bold' }}>
-            Loading team data...
-          </p>
+      <div className="d-flex justify-content-center align-items-center" style={{height: '100vh'}}>
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Checking team registration...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (isTeamAlreadyRegistered) {
+    return (
+      <div className="container-fluid d-flex justify-content-center align-items-center" style={{height: '100vh'}}>
+        <div className="text-center">
+          <h3 className="text-danger">⚠️ Team Already Registered</h3>
+          <p>This team has already registered for a problem statement.</p>
         </div>
       </div>
     );
@@ -419,344 +323,103 @@ const ProblemStatements = () => {
 
   if (successMessage) {
     return (
-      <div style={{
-        backgroundColor: '#ffffff',
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '20px'
-      }}>
-        <div style={{
-          backgroundColor: '#d4edda',
-          border: '2px solid #28a745',
-          borderRadius: '8px',
-          padding: '40px',
-          textAlign: 'center',
-          boxShadow: '0 8px 20px rgba(0,0,0,0.1)',
-          maxWidth: '500px'
-        }}>
-          <h4 style={{ 
-            color: '#155724', 
-            fontWeight: 'bold',
-            marginBottom: '20px'
-          }}>
-            ✅ Success!
-          </h4>
-          <p style={{ 
-            color: '#155724',
-            marginBottom: '15px',
-            whiteSpace: 'pre-wrap'
-          }}>
-            {successMessage}
-          </p>
-          <small style={{ color: '#6c757d' }}>
-            Redirecting to home page...
-          </small>
+      <div className="container-fluid d-flex justify-content-center align-items-center" style={{height: '100vh', backgroundColor: '#e8f5e8'}}>
+        <div className="text-center p-5">
+          <div className="mb-4">
+            <div className="display-1 text-success">🎉</div>
+            <h2 className="text-success mb-3">Registration Successful!</h2>
+          </div>
+          <div className="alert alert-success p-4" style={{fontSize: '16px', lineHeight: '1.6'}}>
+            <pre style={{whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0}}>
+              {successMessage}
+            </pre>
+          </div>
+          <div className="mt-4">
+            <div className="spinner-border text-success me-2" role="status" style={{width: '1rem', height: '1rem'}}>
+              <span className="visually-hidden">Loading...</span>
+            </div>
+            <span className="text-muted">Redirecting to home page...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (showConfirmation && selectedProblem) {
+    return (
+      <div className="container-fluid d-flex justify-content-center align-items-center" style={{height: '100vh', backgroundColor: '#f8f9fa'}}>
+        <div className="card shadow-lg" style={{maxWidth: '600px', width: '100%'}}>
+          <div className="card-header text-center bg-warning">
+            <h4 className="mb-0">⚠️ Confirm Problem Selection</h4>
+          </div>
+          <div className="card-body">
+            <div className="text-center mb-4">
+              <h5 className="text-primary">Selected Problem Statement:</h5>
+              <h6 className="fw-bold">{selectedProblem.title}</h6>
+              <p className="text-muted">{selectedProblem.description}</p>
+            </div>
+            
+            <div className="text-center mb-4">
+              <h5 className="text-info">Team Details:</h5>
+              <p><strong>Team Name:</strong> {team?.teamName}</p>
+              <p><strong>Team Leader:</strong> {team?.teamLeader}</p>
+              <p><strong>Team ID:</strong> {team?.teamId}</p>
+            </div>
+            
+            <div className="alert alert-warning">
+              <strong>⚠️ Important:</strong> Once confirmed, this registration cannot be changed. 
+              Each team can only register for ONE problem statement.
+            </div>
+            
+            <div className="d-flex gap-3 justify-content-center">
+              <button
+                onClick={handleConfirmSelection}
+                className="btn btn-success btn-lg"
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                    Registering...
+                  </>
+                ) : (
+                  '✅ Confirm Registration'
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowConfirmation(false);
+                  setSelectedProblem(null);
+                }}
+                className="btn btn-secondary btn-lg"
+                disabled={loading}
+              >
+                ❌ Cancel
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div style={{
-      backgroundColor: '#ffffff',
-      minHeight: '100vh',
-      padding: '20px',
-      color: '#2c3e50'
-    }}>
-      {/* CSS for animations */}
-      <style>{`
-        @keyframes pulse {
-          0% { opacity: 1; }
-          50% { opacity: 0.5; }
-          100% { opacity: 1; }
-        }
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-        .live-indicator {
-          animation: pulse 1.5s infinite;
-        }
-        .real-time-glow {
-          box-shadow: 0 0 10px rgba(40, 167, 69, 0.3);
-          transition: box-shadow 0.3s ease;
-        }
-      `}</style>
-      {/* Confirmation Modal */}
-      {showConfirmation && selectedProblem && (
-        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.3)' }}>
-          <div className="modal-dialog modal-dialog-centered">
-            <div className="modal-content" style={{
-              backgroundColor: '#ffffff',
-              border: '2px solid #2c3e50',
-              borderRadius: '8px',
-              boxShadow: '0 10px 30px rgba(0,0,0,0.2)'
-            }}>
-              <div className="modal-header" style={{
-                backgroundColor: '#f8f9fa',
-                borderBottom: '2px solid #2c3e50',
-                color: '#2c3e50'
-              }}>
-                <h5 className="modal-title" style={{
-                  fontWeight: 'bold',
-                  color: '#2c3e50'
-                }}>
-                  Confirm Problem Statement Selection
-                </h5>
-              </div>
-              <div className="modal-body" style={{
-                backgroundColor: '#ffffff',
-                color: '#2c3e50'
-              }}>
-                <div className="text-center">
-                  <div className="mb-3" style={{
-                    border: '1px solid #dee2e6',
-                    borderRadius: '6px',
-                    padding: '15px',
-                    backgroundColor: '#f8f9fa'
-                  }}>
-                    <strong style={{ color: '#2c3e50' }}>Team Details:</strong>
-                    <p className="mb-1" style={{ color: '#495057' }}>
-                      Team ID: <span style={{ color: '#2c3e50', fontWeight: 'bold' }}>{team.teamId}</span>
-                    </p>
-                    <p className="mb-1" style={{ color: '#495057' }}>
-                      Team Name: <span style={{ color: '#2c3e50', fontWeight: 'bold' }}>{team.teamName}</span>
-                    </p>
-                    <p className="mb-3" style={{ color: '#495057' }}>
-                      Team Leader: <span style={{ color: '#2c3e50', fontWeight: 'bold' }}>{team.teamLeader}</span>
-                    </p>
-                  </div>
-                  
-                  <div className="mb-3">
-                    <strong style={{ color: '#2c3e50' }}>Selected Problem Statement:</strong>
-                    <div style={{
-                      backgroundColor: '#f8f9fa',
-                      border: '2px solid #dee2e6',
-                      borderRadius: '6px',
-                      padding: '15px',
-                      marginTop: '10px'
-                    }}>
-                      <h6 style={{ 
-                        color: '#2c3e50', 
-                        fontWeight: 'bold',
-                        marginBottom: '10px'
-                      }}>
-                        {selectedProblem.title}
-                      </h6>
-                      <p style={{ 
-                        color: '#6c757d', 
-                        fontSize: '0.9rem',
-                        margin: 0
-                      }}>
-                        {selectedProblem.description}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div style={{
-                    backgroundColor: '#d4edda',
-                    border: '2px solid #28a745',
-                    borderRadius: '6px',
-                    padding: '15px',
-                    marginBottom: '20px'
-                  }}>
-                    <strong style={{ color: '#155724' }}>⚡ ULTRA-FAST REGISTRATION:</strong>
-                    <span style={{ color: '#155724' }}> Click "INSTANT REGISTER" for lightning-speed processing!</span>
-                    <br />
-                    <small style={{ color: '#6c757d' }}>
-                      🚀 Financial-grade speed: Registration completes in &lt;2 milliseconds
-                    </small>
-                  </div>
-                  
-                  <p className="text-center" style={{ 
-                    color: '#2c3e50', 
-                    fontWeight: 'bold'
-                  }}>
-                    Are you sure you want to register for this problem statement?
-                  </p>
+    <div className="container-fluid" style={{backgroundColor: '#f8f9fa', minHeight: '100vh', paddingTop: '2rem'}}>
+      {/* Header */}
+      <div className="row mb-4">
+        <div className="col-12 text-center">
+          <h1 className="display-5 text-primary mb-3">🎯 Problem Statement Selection</h1>
+          <div className="card mx-auto" style={{maxWidth: '600px'}}>
+            <div className="card-body">
+              <h5 className="card-title text-info">Team Information</h5>
+              <div className="row">
+                <div className="col-md-6">
+                  <p><strong>Team Name:</strong> {team?.teamName}</p>
+                  <p><strong>Team Leader:</strong> {team?.teamLeader}</p>
                 </div>
-              </div>
-              <div className="modal-footer justify-content-center" style={{
-                backgroundColor: '#f8f9fa',
-                borderTop: '2px solid #dee2e6'
-              }}>
-                <button 
-                  type="button" 
-                  onClick={handleCancelSelection}
-                  disabled={loading}
-                  style={{
-                    backgroundColor: '#6c757d',
-                    border: '2px solid #6c757d',
-                    color: '#ffffff',
-                    borderRadius: '6px',
-                    padding: '10px 20px',
-                    fontWeight: 'bold',
-                    marginRight: '10px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="button" 
-                  onClick={handleConfirmSelection}
-                  disabled={loading}
-                  style={{
-                    backgroundColor: '#2c3e50',
-                    border: '2px solid #2c3e50',
-                    color: '#ffffff',
-                    borderRadius: '6px',
-                    padding: '10px 25px',
-                    fontWeight: 'bold',
-                    cursor: loading ? 'not-allowed' : 'pointer',
-                    minWidth: '160px',
-                    transition: 'all 0.1s ease'
-                  }}
-                >
-                  {loading ? (
-                    <>
-                      <span className="spinner-border spinner-border-sm me-2" role="status"></span>
-                      ⚡ PROCESSING...
-                    </>
-                  ) : (
-                    '⚡ INSTANT REGISTER'
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="row justify-content-center mb-4">
-        <div className="col-md-8">
-          <div style={{
-            backgroundColor: '#ffffff',
-            border: '2px solid #2c3e50',
-            borderRadius: '8px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
-          }}>
-            <div style={{
-              padding: '30px',
-              textAlign: 'center'
-            }}>
-              <h2 style={{
-                color: '#2c3e50',
-                fontWeight: 'bold',
-                marginBottom: '20px'
-              }}>
-                Select Problem Statement
-              </h2>
-              <div style={{
-                backgroundColor: '#f8f9fa',
-                border: '1px solid #dee2e6',
-                borderRadius: '6px',
-                padding: '15px',
-                marginBottom: '20px'
-              }}>
-                <p style={{ color: '#495057', marginBottom: '8px' }}>
-                  <strong style={{ color: '#2c3e50' }}>Team:</strong> {team.teamName} 
-                  <span style={{ color: '#6c757d' }}> (ID: {team.teamId})</span>
-                </p>
-                <p style={{ color: '#495057', margin: 0 }}>
-                  <strong style={{ color: '#2c3e50' }}>Team Leader:</strong> {team.teamLeader}
-                </p>
-              </div>
-              <div style={{
-                backgroundColor: '#e8f4fd',
-                border: '1px solid #bee5eb',
-                borderRadius: '6px',
-                padding: '20px'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                  <div>
-                    <strong style={{ color: '#2c3e50' }}>⚡ 1ms Auto-Refresh System</strong>
-                    <div style={{ 
-                      display: 'inline-block', 
-                      marginLeft: '10px',
-                      padding: '2px 8px', 
-                      borderRadius: '4px',
-                      backgroundColor: autoRefreshActive ? '#d4edda' : '#f8d7da',
-                      color: autoRefreshActive ? '#155724' : '#721c24',
-                      fontSize: '0.8rem',
-                      fontWeight: 'bold'
-                    }}>
-                      {autoRefreshActive ? '⚡ 1ms ACTIVE' : '🔴 STOPPED'}
-                    </div>
-                    {autoRefreshActive && (
-                      <div style={{ 
-                        display: 'inline-block', 
-                        marginLeft: '5px',
-                        padding: '2px 8px', 
-                        borderRadius: '4px',
-                        backgroundColor: '#fff3cd',
-                        color: '#856404',
-                        fontSize: '0.7rem',
-                        fontWeight: 'bold'
-                      }}>
-                        #{refreshCount}
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: '#6c757d' }}>
-                    Refreshes: {refreshCount} | Updates: {realtimeUpdates}
-                  </div>
-                </div>
-                
-                <span style={{ color: '#495057' }}> Each problem statement has </span>
-                <strong style={{ color: '#2c3e50' }}>only 2 slots available</strong>.
-                <br />
-                <small style={{ color: '#6c757d' }}>
-                  ⚡ Last refresh: {lastUpdated.toLocaleTimeString()}.{String(lastUpdated.getMilliseconds()).padStart(3, '0')}
-                  <span style={{ 
-                    marginLeft: '10px',
-                    color: autoRefreshActive ? '#28a745' : '#dc3545',
-                    fontWeight: 'bold'
-                  }}>
-                    {autoRefreshActive ? '⚡ 1ms AUTO-REFRESH ACTIVE' : 'AUTO-REFRESH STOPPED'}
-                  </span>
-                </small>
-                {autoRefreshActive && (
-                  <div style={{ 
-                    marginTop: '8px', 
-                    padding: '8px', 
-                    backgroundColor: '#e8f5e8', 
-                    borderRadius: '4px',
-                    border: '1px solid #28a745'
-                  }}>
-                    <small style={{ color: '#155724', fontWeight: 'bold' }}>
-                      🚀 Ultra-fast refresh every 1 millisecond - Total refreshes: {refreshCount}
-                    </small>
-                  </div>
-                )}
-                <div style={{ 
-                  marginTop: '10px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}>
-                  <button
-                    onClick={() => {
-                      fetchProblemCounts();
-                      setRealtimeUpdates(prev => prev + 1);
-                    }}
-                    style={{
-                      backgroundColor: '#007bff',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      padding: '5px 10px',
-                      fontSize: '0.8rem',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    🔄 Manual Refresh
-                  </button>
-                  <small style={{ color: '#6c757d' }}>
-                    Next auto-refresh in: <strong>1ms</strong>
-                  </small>
+                <div className="col-md-6">
+                  <p><strong>Team ID:</strong> {team?.teamId}</p>
+                  <p><strong>Members:</strong> 5</p>
                 </div>
               </div>
             </div>
@@ -764,196 +427,82 @@ const ProblemStatements = () => {
         </div>
       </div>
 
-      <div className="row g-4">
-        {PROBLEM_STATEMENTS.map((problem) => {
-          const registeredCount = problemCounts[problem.id] || 0;
-          const isDisabled = registeredCount >= 2;
-          const isFilled = registeredCount >= 2;
-          
-          return (
-            <div key={problem.id} className="col-md-6 col-lg-4">
-              <div style={{ 
-                     backgroundColor: '#ffffff',
-                     cursor: (isDisabled || isTeamAlreadyRegistered) ? 'not-allowed' : 'pointer',
-                     transition: 'transform 0.2s, box-shadow 0.2s',
-                     border: isFilled || isTeamAlreadyRegistered ? 
-                       '3px solid #dc3545' : 
-                       registeredCount === 1 ?
-                       '3px solid #ffc107' :
-                       '2px solid #2c3e50',
-                     borderRadius: '8px',
-                     boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                     height: '100%',
-                     opacity: isDisabled || isTeamAlreadyRegistered ? 0.7 : 1
-                   }}
-                   onMouseEnter={(e) => {
-                     if (!isDisabled && !isTeamAlreadyRegistered) {
-                       e.currentTarget.style.transform = 'translateY(-5px)';
-                       e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.2)';
-                     }
-                   }}
-                   onMouseLeave={(e) => {
-                     e.currentTarget.style.transform = 'translateY(0)';
-                     e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                   }}
-                   onClick={() => {
-                     if (isDisabled) {
-                       alert('Sorry! This problem statement is already filled. Please choose another problem statement.');
-                     } else if (!isTeamAlreadyRegistered) {
-                       handleSelectProblem(problem);
-                     }
-                   }}>
-                <div style={{
-                  padding: '25px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  height: '100%'
-                }}>
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    marginBottom: '15px'
-                  }}>
-                    <h5 style={{
-                      color: '#2c3e50',
-                      fontWeight: 'bold',
-                      fontSize: '1.2rem',
-                      flex: 1,
-                      marginRight: '15px'
-                    }}>
-                      {problem.title}
-                    </h5>
-                    {(isFilled || isTeamAlreadyRegistered) && (
-                      <span style={{
-                        backgroundColor: isFilled ? '#dc3545' : '#28a745',
-                        color: '#ffffff',
-                        padding: '5px 12px',
-                        borderRadius: '6px',
-                        fontSize: '0.8rem',
-                        fontWeight: 'bold'
-                      }}>
-                        {isTeamAlreadyRegistered ? 'REGISTERED' : 'FILLED'}
+
+
+      {/* Problem Statements Grid */}
+      <div className="row">
+        {problemStatements.length === 0 ? (
+          <div className="col-12 text-center py-5">
+            <div className="alert alert-info">
+              <h5>📋 Loading Problem Statements...</h5>
+              <p className="mb-0">Please wait while we load the available problem statements from the database.</p>
+            </div>
+          </div>
+        ) : (
+          problemStatements.map((problem) => {
+            const count = problemCounts[problem.id] || 0;
+            const isFull = count >= 2;
+            const isAvailable = count < 2;
+            
+            return (
+              <div key={problem.id} className="col-lg-6 col-xl-4 mb-4">
+                <div className={`card h-100 border-2 ${isFull ? 'border-danger' : 'border-success'}`}>
+                  <div className="card-header d-flex justify-content-between align-items-center">
+                    <h6 className="card-title mb-0 text-primary">
+                      Problem {problem.number || 'X'}: {problem.title}
+                    </h6>
+                    <div>
+                      <span className={`badge ${isFull ? 'bg-danger' : 'bg-success'}`}>
+                        {isFull ? 'FULL' : 'ACTIVE'}
                       </span>
-                    )}
+                      <span className="badge bg-info ms-1">
+                        {count}/2
+                      </span>
+                    </div>
                   </div>
                   
-                  <p style={{
-                    color: '#6c757d',
-                    lineHeight: '1.5',
-                    flex: 1,
-                    marginBottom: '20px'
-                  }}>
-                    {problem.description}
-                  </p>
-                  
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginTop: 'auto'
-                  }}>
-                    <small style={{
-                      color: registeredCount >= 2 ? '#dc3545' : 
-                             registeredCount === 1 ? '#ffc107' : '#28a745',
-                      fontWeight: 'bold',
-                      fontSize: '0.9rem',
-                      display: 'flex',
-                      alignItems: 'center'
-                    }}>
-                      <span style={{ marginRight: '5px' }}>
-                        {registeredCount >= 2 ? '🔴' : registeredCount === 1 ? '🟡' : '🟢'}
-                      </span>
-                      {registeredCount}/2 teams {isFilled ? '(COMPLETE)' : 'registered'}
-                      {realTimeConnected && (
-                        <span style={{
-                          marginLeft: '8px',
-                          backgroundColor: '#28a745',
-                          color: 'white',
-                          padding: '2px 6px',
-                          borderRadius: '3px',
-                          fontSize: '0.7rem',
-                          animation: 'pulse 2s infinite'
-                        }}>
-                          LIVE
-                        </span>
-                      )}
-                    </small>
+                  <div className="card-body d-flex flex-column">
+                    <p className="card-text text-muted flex-grow-1">{problem.description}</p>
                     
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (isDisabled) {
-                          alert('Sorry! This problem statement is already filled. Please choose another problem statement.');
-                        } else {
-                          handleSelectProblem(problem);
-                        }
-                      }}
-                      disabled={isDisabled || loading || isTeamAlreadyRegistered}
-                      style={{
-                        backgroundColor: isDisabled || isTeamAlreadyRegistered ? 
-                          '#6c757d' : 
-                          registeredCount === 1 ? 
-                          '#ffc107' : 
-                          '#2c3e50',
-                        border: `2px solid ${isDisabled || isTeamAlreadyRegistered ? 
-                          '#6c757d' : 
-                          registeredCount === 1 ? 
-                          '#ffc107' : 
-                          '#2c3e50'}`,
-                        color: '#ffffff',
-                        borderRadius: '6px',
-                        padding: '8px 16px',
-                        fontWeight: 'bold',
-                        fontSize: '0.9rem',
-                        cursor: isDisabled || loading || isTeamAlreadyRegistered ? 'not-allowed' : 'pointer',
-                        minWidth: '100px',
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      {isDisabled ? 'FULL' : 
-                       isTeamAlreadyRegistered ? 'REGISTERED' :
-                       registeredCount === 1 ? 'LAST SLOT' :
-                       loading ? (
-                         <>
-                           <span className="spinner-border spinner-border-sm me-1" role="status"></span>
-                           Loading...
-                         </>
-                       ) : 'SELECT'}
-                    </button>
+                    <div className="mt-auto">
+                      {isFull ? (
+                        <button className="btn btn-danger w-100" disabled>
+                          🚫 PROBLEM FULL ({count}/2)
+                        </button>
+                      ) : (
+                        <button 
+                          className="btn btn-success w-100" 
+                          onClick={() => handleProblemSelect(problem)}
+                          disabled={loading}
+                        >
+                          ✅ Select Problem {problem.number || 'X'} ({count}/2)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="card-footer bg-transparent">
+                    <small className="text-muted">
+                      Last updated: {lastUpdated.toLocaleTimeString()}
+                    </small>
                   </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
-      
-      <div className="text-center mt-5">
-        <button
-          onClick={() => navigate('/')}
-          style={{
-            backgroundColor: '#2c3e50',
-            border: '2px solid #2c3e50',
-            color: '#ffffff',
-            borderRadius: '8px',
-            padding: '12px 25px',
-            fontSize: '1rem',
-            fontWeight: 'bold',
-            cursor: 'pointer',
-            transition: 'all 0.2s ease'
-          }}
-          onMouseEnter={(e) => {
-            e.target.style.backgroundColor = '#1a252f';
-            e.target.style.borderColor = '#1a252f';
-          }}
-          onMouseLeave={(e) => {
-            e.target.style.backgroundColor = '#2c3e50';
-            e.target.style.borderColor = '#2c3e50';
-          }}
-        >
-          ← Back to Registration
-        </button>
+
+      {/* Back Button */}
+      <div className="row mt-4 mb-4">
+        <div className="col-12 text-center">
+          <button 
+            onClick={() => navigate('/')}
+            className="btn btn-outline-secondary btn-lg"
+          >
+            ← Back to Registration
+          </button>
+        </div>
       </div>
     </div>
   );
