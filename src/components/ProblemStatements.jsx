@@ -197,129 +197,78 @@ const ProblemStatements = () => {
       setShowConfirmation(false);
       setSelectedProblem(null);
 
-      // FRESH CHECK: Get real-time registration count from Firebase (not cached data)
-      const registrationsRef = collection(db, 'registrations');
-      const problemQuery = query(registrationsRef, where('problemStatementId', '==', selectedProblem.id));
-      const freshCheck = await getDocs(problemQuery);
-      
-      console.log(`🔍 FRESH CHECK - Current registrations for problem ${selectedProblem.id}:`, freshCheck.size);
-      
-      if (freshCheck.size >= 2) {
-        const registeredTeams = [];
-        freshCheck.forEach(doc => {
-          const data = doc.data();
-          registeredTeams.push(data.teamName);
-        });
-        
-        alert(
-          `❌ PROBLEM STATEMENT FULL!\n\n` +
-          `Problem "${selectedProblem.title}" is now FULL (${freshCheck.size}/2 teams).\n\n` +
-          `Registered teams:\n` +
-          `• ${registeredTeams.join('\n• ')}\n\n` +
-          `🚫 Maximum 2 teams per problem statement.\n` +
-          `🎯 Please select a different available problem.`
-        );
-        setLoading(false);
-        return;
-      }
-
-      // FRESH CHECK: Verify team hasn't registered elsewhere (real-time check)
-      const teamQuery = query(registrationsRef, where('teamId', '==', team.teamId));
-      const teamCheck = await getDocs(teamQuery);
-      
-      console.log(`🔍 FRESH CHECK - Team check for ${team.teamId}:`, teamCheck.size);
-      
-      if (!teamCheck.empty) {
-        const existingRegistration = teamCheck.docs[0].data();
-        alert(
-          `🚫 TEAM ALREADY REGISTERED!\n\n` +
-          `Your team "${team.teamName}" is already registered for:\n` +
-          `"${existingRegistration.problemTitle}"\n\n` +
-          `❌ Each team can only register ONCE.\n` +
-          `🔄 Redirecting to home page...`
-        );
-        setTimeout(() => navigate('/'), 2000);
-        setLoading(false);
-        return;
-      }
-
-      // Use atomic transaction to prevent race conditions
-      console.log('🚀 Starting ATOMIC registration process...');
-      console.log('Team:', team);
-      console.log('Selected Problem:', selectedProblem);
+      // ⚡ INSTANT REGISTRATION - Direct atomic transaction
+      console.log('⚡ INSTANT registration:', team.teamId, '→', selectedProblem.id);
       
       const result = await runTransaction(db, async (transaction) => {
-        const registrationsRef = collection(db, 'registrations');
+        // ⚡ SPEED OPTIMIZED: Single counter document per problem
+        const counterRef = doc(db, 'counters', selectedProblem.id);
+        const teamRef = doc(db, 'teams', team.teamId);
         
-        // ATOMIC CHECK: Get current registrations for this problem
-        const problemQuery = query(registrationsRef, where('problemStatementId', '==', selectedProblem.id));
-        const currentRegistrations = await getDocs(problemQuery);
+        // Single atomic read operation  
+        const [counter, teamDoc] = await Promise.all([
+          transaction.get(counterRef),
+          transaction.get(teamRef)
+        ]);
         
-        console.log(`🔍 ATOMIC CHECK - Current registrations for problem ${selectedProblem.id}:`, currentRegistrations.size);
-        
-        // RACE CONDITION PROTECTION: Check if problem is full (2 teams maximum)
-        if (currentRegistrations.size >= 2) {
-          const registeredTeams = [];
-          currentRegistrations.forEach(doc => {
-            const data = doc.data();
-            registeredTeams.push(`${data.teamName} (registered: ${new Date(data.registrationTimestamp).toLocaleTimeString()})`);
-          });
-          throw new Error(`RACE_CONDITION_REJECTED: Problem "${selectedProblem.title}" is now FULL! Already registered teams: ${registeredTeams.join(', ')}. Maximum 2 teams per problem. Please choose another problem immediately!`);
+        // Fast validation checks
+        if (teamDoc.exists()) {
+          throw new Error(`TEAM_EXISTS: ${team.teamName} already registered`);
         }
-
-        // ATOMIC CHECK: Verify team hasn't registered elsewhere
-        const teamQuery = query(registrationsRef, where('teamId', '==', team.teamId));
-        const teamCheck = await getDocs(teamQuery);
         
-        console.log(`🔍 ATOMIC CHECK - Team check for ${team.teamId}:`, teamCheck.size);
-        
-        if (!teamCheck.empty) {
-          const existingRegistration = teamCheck.docs[0].data();
-          throw new Error(`TEAM_ALREADY_REGISTERED: Your team "${team.teamName}" is already registered for "${existingRegistration.problemTitle}"`);
+        const count = counter.exists() ? counter.data().count : 0;
+        if (count >= 2) {
+          throw new Error(`FULL: Problem ${selectedProblem.title} is full (${count}/2)`);
         }
-
-        // CREATE ATOMIC REGISTRATION DATA with precise timestamp
-        const registrationData = {
+        
+        // ⚡ LIGHTNING FAST WRITES - minimal data only
+        const slot = count + 1;
+        const now = Date.now();
+        
+        // Update counter
+        transaction.set(counterRef, { count: slot, updated: now });
+        
+        // Register team
+        transaction.set(teamRef, { 
+          problem: selectedProblem.id,
+          slot: slot,
+          time: now
+        });
+        
+        // Minimal registration record
+        const regRef = doc(collection(db, 'registrations'));
+        transaction.set(regRef, {
           problemStatementId: selectedProblem.id,
-          problemNumber: selectedProblem.number || selectedProblem.id,
           problemTitle: selectedProblem.title,
           teamId: team.teamId,
           teamName: team.teamName,
           teamLeader: team.teamLeader,
           teamMembers: 5,
-          memberDetails: team.memberDetails || [],
           registeredAt: serverTimestamp(),
-          timestamp: serverTimestamp(),
-          status: 'CONFIRMED',
-          raceConditionWinner: true, // Mark as winner of race condition
-          registrationTimestamp: Date.now() // Additional timestamp for sorting
-        };
+          slot: slot,
+          status: 'CONFIRMED'
+        });
         
-        console.log('📝 ATOMIC registration data:', registrationData);
-
-        // ATOMIC OPERATION: Add registration document
-        const newDocRef = doc(registrationsRef);
-        transaction.set(newDocRef, registrationData);
-        
-        return { success: true, id: newDocRef.id, isWinner: true };
+        return { slot, count: slot, time: now };
       });
       
-      console.log('✅ ATOMIC Registration successful! Result:', result);
+      console.log('✅ INSTANT Registration successful!', result);
       
       // Update local cache immediately
       setRegistrationCache(prev => new Set([...prev, team.teamId]));
       setProblemCounts(prev => ({
         ...prev,
-        [selectedProblem.id]: (prev[selectedProblem.id] || 0) + 1
+        [selectedProblem.id]: result.count
       }));
       
       setSuccessMessage(
         `🎉 REGISTRATION SUCCESS!\n\n` +
-        `✅ Team "${team.teamName}" registered for "${selectedProblem.title}"\n\n` +
-        `Registration completed successfully!`
+        `✅ Team "${team.teamName}" secured SLOT ${result.slot}/2\n` +
+        `📋 Problem: "${selectedProblem.title}"\n\n` +
+        `🎯 Registration completed successfully!`
       );
       
-      setTimeout(() => navigate('/'), 3000);
+      setTimeout(() => navigate('/'), 1500);
       
     } catch (error) {
       console.error('🚨 ATOMIC Registration error:', error);
@@ -329,75 +278,34 @@ const ProblemStatements = () => {
       let errorMessage = '';
       let isRaceCondition = false;
       
-      // Handle specific race condition errors
-      if (error.message.includes('RACE_CONDITION_REJECTED')) {
-        isRaceCondition = true;
-        const cleanMessage = error.message.replace('RACE_CONDITION_REJECTED: ', '');
+      console.log('❌ Registration failed:', error.message);
+      
+      // Handle error types
+      if (error.message.includes('FULL:')) {
+        const cleanMessage = error.message.replace('FULL: ', '');
         errorMessage = 
-          `🏃‍♂️ REGISTRATION LIMIT REACHED!\n\n` +
-          `⚡ ${cleanMessage}\n\n` +
-          `🎯 WHAT HAPPENED:\n` +
-          `• While you were registering, the 2-team limit was reached\n` +
-          `• Another team submitted just milliseconds before you\n` +
-          `• Maximum 2 teams allowed per problem statement\n\n` +
-          `🚀 NEXT STEPS:\n` +
-          `• Choose a different available problem immediately\n` +
-          `• Speed matters - first 2 teams win each problem!\n\n` +
-          `⏱️ Timing is everything in hackathons!`;
-        
-      } else if (error.message.includes('TEAM_ALREADY_REGISTERED')) {
-        const cleanMessage = error.message.replace('TEAM_ALREADY_REGISTERED: ', '');
-        errorMessage = 
-          `🚫 ALREADY REGISTERED!\n\n` +
+          `❌ PROBLEM FULL!\n\n` +
           `${cleanMessage}\n\n` +
-          `❌ Each team can only register ONCE.\n` +
-          `🔄 Redirecting to home page...`;
+          `🎯 Please select another problem!`;
         
-        setTimeout(() => navigate('/'), 3000);
-        
-      } else if (error.message.includes('full')) {
+      } else if (error.message.includes('TEAM_EXISTS:')) {
+        const cleanMessage = error.message.replace('TEAM_EXISTS: ', '');
         errorMessage = 
-          `❌ PROBLEM STATEMENT FULL!\n\n` +
-          `This problem statement is now full.\n` +
-          `Please select another available problem.`;
-        
-      } else if (error.code === 'permission-denied') {
-        errorMessage = 
-          `🔒 PERMISSION DENIED!\n\n` +
-          `Database access denied. Please contact administrator.`;
-        
-      } else if (error.code === 'unavailable') {
-        errorMessage = 
-          `📡 SERVICE UNAVAILABLE!\n\n` +
-          `Registration service is temporarily down.\n` +
-          `Please try again in a moment.`;
-        
-      } else if (error.message.includes('network')) {
-        errorMessage = 
-          `🌐 NETWORK ERROR!\n\n` +
-          `Please check your internet connection and try again.`;
+          `🚫 TEAM ALREADY REGISTERED!\n\n` +
+          `${cleanMessage}\n\n` +
+          `🔄 Redirecting to home...`;
+        setTimeout(() => navigate('/'), 1000);
         
       } else {
+        // Generic error handling
         errorMessage = 
           `❌ REGISTRATION FAILED!\n\n` +
-          `An unexpected error occurred.\n` +
           `Error: ${error.message}\n\n` +
-          `Please try again or contact support.`;
+          `Please try again.`;
       }
       
-      // Show appropriate alert based on error type
-      if (isRaceCondition) {
-        // More prominent alert for race conditions
-        if (window.confirm(errorMessage + '\n\nClick OK to try selecting another problem, or Cancel to go back to home.')) {
-          // Stay on page to select another problem
-          setShowConfirmation(false);
-          setSelectedProblem(null);
-        } else {
-          navigate('/');
-        }
-      } else {
-        alert(errorMessage);
-      }
+      // Show fast error message
+      alert(errorMessage);
       
       setLoading(false);
     }
