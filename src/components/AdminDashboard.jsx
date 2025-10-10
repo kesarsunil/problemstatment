@@ -19,11 +19,13 @@ const AdminDashboard = () => {
   const [newProblem, setNewProblem] = useState({
     number: '',
     title: '',
-    description: ''
+    description: '',
+    teamLimit: 2
   });
   const [addingProblem, setAddingProblem] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [realTimeConnected, setRealTimeConnected] = useState(false);
+  const [migrating, setMigrating] = useState(false);
 
   // 🔐 PASSWORD AUTHENTICATION
   const handlePasswordSubmit = (e) => {
@@ -78,7 +80,6 @@ const AdminDashboard = () => {
           teamName: data.teamName,
           teamLeader: data.teamLeader,
           problemTitle: data.problemTitle || data.problemStatementId,
-          problemNumber: data.problemNumber || data.problemStatementId, // Include problem number
           timestamp: data.registeredAt || data.timestamp || data.registrationTime
         });
       });
@@ -152,7 +153,6 @@ const AdminDashboard = () => {
           teamName: data.teamName,
           teamLeader: data.teamLeader,
           problemTitle: data.problemTitle || data.problemStatementId,
-          problemNumber: data.problemNumber || data.problemStatementId, // Include problem number
           timestamp: data.registeredAt || data.timestamp || data.registrationTime,
           memberDetails: data.memberDetails || []
         });
@@ -208,9 +208,113 @@ const AdminDashboard = () => {
       
       setProblemStatements(problemsData);
       console.log(`📋 Admin Dashboard: Loaded ${problemsData.length} problem statements`);
+      console.log('📊 Problem statements data:', problemsData.map(p => ({
+        id: p.id,
+        title: p.title,
+        teamLimit: p.teamLimit,
+        hasTeamLimit: p.hasOwnProperty('teamLimit')
+      })));
       
     } catch (error) {
       console.error('Error fetching problem statements:', error);
+    }
+  };
+
+  // 🔄 SYNC COUNTERS WITH ACTUAL REGISTRATIONS
+  const syncCountersWithRegistrations = async () => {
+    if (migrating) return;
+    
+    try {
+      setMigrating(true);
+      console.log('🔄 Syncing problem counters with actual registrations...');
+      
+      // Get all registrations
+      const registrationsSnapshot = await getDocs(collection(db, 'registrations'));
+      const problemCounts = {};
+      
+      // Count actual registrations per problem
+      registrationsSnapshot.forEach((doc) => {
+        const data = doc.data();
+        const problemId = data.problemStatementId;
+        if (problemId) {
+          problemCounts[problemId] = (problemCounts[problemId] || 0) + 1;
+        }
+      });
+      
+      // Update counter documents to match actual registrations
+      const updates = [];
+      for (const [problemId, count] of Object.entries(problemCounts)) {
+        const counterRef = doc(db, 'problem_counters', problemId);
+        updates.push(
+          setDoc(counterRef, { 
+            count: count, 
+            updated: Date.now(),
+            problemId: problemId,
+            lastSync: new Date().toISOString()
+          }, { merge: true })
+        );
+        console.log(`📊 Problem ${problemId}: Setting counter to ${count} registrations`);
+      }
+      
+      if (updates.length > 0) {
+        await Promise.all(updates);
+        console.log(`✅ Counter sync complete! Updated ${updates.length} problem counters`);
+        alert(`✅ Counter Sync Complete!\n\nSynced ${updates.length} problem counters with actual registrations.\n\nThe display should now show correct counts.`);
+        
+        // Reload data
+        fetchProblemStatements();
+        fetchRegistrations();
+      } else {
+        console.log('ℹ️ No registrations found to sync');
+        alert('ℹ️ No registrations found to sync counters with.');
+      }
+      
+    } catch (error) {
+      console.error('❌ Counter sync error:', error);
+      alert('❌ Counter sync failed: ' + error.message);
+    } finally {
+      setMigrating(false);
+    }
+  };
+
+  // 🔄 MIGRATE EXISTING PROBLEM STATEMENTS TO ADD TEAM LIMIT
+  const migrateExistingProblems = async () => {
+    if (migrating) return;
+    
+    try {
+      setMigrating(true);
+      console.log('🔄 Starting migration of existing problem statements...');
+      
+      const querySnapshot = await getDocs(collection(db, 'problem_statements'));
+      const updates = [];
+      
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (!data.hasOwnProperty('teamLimit')) {
+          console.log(`📝 Migrating problem ${doc.id}: "${data.title}" - adding teamLimit: 2`);
+          updates.push(
+            setDoc(doc.ref, { ...data, teamLimit: 2 }, { merge: true })
+          );
+        }
+      });
+      
+      if (updates.length > 0) {
+        await Promise.all(updates);
+        console.log(`✅ Migration complete! Updated ${updates.length} problem statements`);
+        alert(`✅ Migration Complete!\n\nUpdated ${updates.length} problem statements with default team limit of 2.\n\nPlease refresh the page to see the changes.`);
+        
+        // Reload data
+        fetchProblemStatements();
+      } else {
+        console.log('ℹ️ No migration needed - all problem statements already have teamLimit');
+        alert('ℹ️ All problem statements already have team limits set.');
+      }
+      
+    } catch (error) {
+      console.error('❌ Migration error:', error);
+      alert('❌ Migration failed: ' + error.message);
+    } finally {
+      setMigrating(false);
     }
   };
 
@@ -222,10 +326,10 @@ const AdminDashboard = () => {
       return;
     }
     
-    // Validate problem number is 1-50
+    // Validate problem number is 1-8
     const problemNum = parseInt(newProblem.number.trim());
-    if (problemNum < 1 || problemNum > 50) {
-      alert('❌ Problem number must be between 1 and 50');
+    if (problemNum < 1 || problemNum > 8) {
+      alert('❌ Problem number must be between 1 and 8');
       return;
     }
     
@@ -243,6 +347,7 @@ const AdminDashboard = () => {
         number: newProblem.number.trim(),
         title: newProblem.title.trim(),
         description: newProblem.description.trim(),
+        teamLimit: newProblem.teamLimit || 2,
         createdAt: serverTimestamp(),
         status: 'active',
         registrationCount: 0
@@ -252,7 +357,7 @@ const AdminDashboard = () => {
       await setDoc(doc(db, 'problem_statements', newProblem.number.trim()), problemData);
       
       // Clear form
-      setNewProblem({ number: '', title: '', description: '' });
+      setNewProblem({ number: '', title: '', description: '', teamLimit: 2 });
       setShowAddForm(false);
       
       alert('✅ Problem Statement added successfully!\nIt will now appear on the home page for team registration.');
@@ -317,24 +422,6 @@ const AdminDashboard = () => {
 
   const refreshData = () => {
     fetchRegistrations();
-  };
-
-  // Helper function to get problem statement number from ID
-  const getProblemStatementNumber = (problemStatementId) => {
-    const problem = problemStatements.find(p => p.id === problemStatementId);
-    return problem ? problem.number : null;
-  };
-
-  // Helper function to format team number
-  const formatTeamNumber = (teamNumber) => {
-    if (!teamNumber) return 'N/A';
-    // If it already starts with T, just ensure proper padding
-    if (teamNumber.toString().startsWith('T')) {
-      const num = teamNumber.toString().substring(1);
-      return `T${num.padStart(3, '0')}`;
-    }
-    // If it's just a number, format it properly
-    return `T${teamNumber.toString().padStart(3, '0')}`;
   };
 
   // 🔐 PASSWORD LOGIN SCREEN
@@ -427,29 +514,80 @@ const AdminDashboard = () => {
   }
 
   return (
-    <div className="container-fluid" style={{ backgroundColor: '#f8f9fa', minHeight: '100vh', paddingTop: '2rem' }}>
-      {/* Header */}
-      <div className="row mb-4">
-        <div className="col-12">
-          <div className="d-flex justify-content-between align-items-center">
-            <div>
-              <h1 className="display-6 text-primary mb-1">📊 Admin Dashboard</h1>
-              <p className="text-muted mb-0">Manage Problem Statements & Monitor Team Registrations</p>
-            </div>
-            <div className="d-flex gap-2">
-              <div className={`badge ${realTimeConnected ? 'bg-success' : 'bg-danger'} fs-6`}>
-                {realTimeConnected ? '🟢 Live Updates' : '🔴 Disconnected'}
+    <div style={{ 
+      minHeight: '100vh', 
+      background: 'linear-gradient(135deg, #1a1a1a 0%, #2d1B1B 50%, #1a1a1a 100%)',
+      padding: '2rem 0'
+    }}>
+      {/* TECHFRONTIER Header */}
+      <div style={{
+        background: 'linear-gradient(90deg, #8B0000 0%, #CD5C5C 50%, #8B0000 100%)',
+        padding: '2rem 0',
+        marginBottom: '2rem',
+        boxShadow: '0 4px 20px rgba(139, 0, 0, 0.3)'
+      }}>
+        <div className="container">
+          <div className="text-center">
+            <h1 style={{
+              fontSize: 'clamp(2rem, 5vw, 3rem)',
+              fontWeight: 'bold',
+              color: '#FFFFFF',
+              textShadow: '3px 3px 6px rgba(0,0,0,0.5)',
+              letterSpacing: '1px',
+              marginBottom: '0.5rem'
+            }}>
+              📊 ADMIN CONTROL CENTER
+            </h1>
+            <p style={{
+              fontSize: '1.2rem',
+              color: '#E0E0E0',
+              marginBottom: '1.5rem'
+            }}>
+              TECHFRONTIER 2K25 Management Dashboard
+            </p>
+            
+            <div className="d-flex justify-content-center gap-3 flex-wrap">
+              <div style={{
+                backgroundColor: 'rgba(0,0,0,0.4)',
+                border: '2px solid #00FF00',
+                borderRadius: '25px',
+                padding: '0.5rem 1rem',
+                backdropFilter: 'blur(10px)'
+              }}>
+                <span style={{color: realTimeConnected ? '#00FF00' : '#FF0000', fontWeight: 'bold'}}>
+                  {realTimeConnected ? '🟢 LIVE UPDATES' : '🔴 DISCONNECTED'}
+                </span>
               </div>
+              
               <button 
                 onClick={downloadPDF}
-                className="btn btn-success"
                 disabled={registrations.length === 0}
+                style={{
+                  backgroundColor: registrations.length === 0 ? '#6c757d' : '#28a745',
+                  border: 'none',
+                  color: 'white',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '25px',
+                  fontWeight: 'bold',
+                  cursor: registrations.length === 0 ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 3px 10px rgba(40, 167, 69, 0.3)'
+                }}
               >
-                📥 Download PDF
+                📥 DOWNLOAD PDF
               </button>
+              
               <button 
                 onClick={handleLogout}
-                className="btn btn-outline-secondary"
+                style={{
+                  backgroundColor: 'transparent',
+                  border: '2px solid #FFD700',
+                  color: '#FFD700',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '25px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease'
+                }}
               >
                 🚪 Logout
               </button>
@@ -458,53 +596,132 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      {/* Statistics Cards */}
-      <div className="row mb-4">
-        <div className="col-md-4">
-          <div className="card border-0 shadow-sm bg-primary text-white">
-            <div className="card-body text-center">
-              <h2 className="display-4 mb-0">{problemStatements.length}</h2>
-              <p className="mb-0">Problem Statements</p>
+        {/* Statistics Cards */}
+        <div className="row mb-4">
+          <div className="col-md-4">
+            <div style={{
+              background: 'linear-gradient(145deg, rgba(23, 162, 184, 0.2), rgba(23, 162, 184, 0.1))',
+              backdropFilter: 'blur(15px)',
+              border: '2px solid rgba(23, 162, 184, 0.3)',
+              borderRadius: '20px',
+              padding: '2rem',
+              textAlign: 'center',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.3)'
+            }}>
+              <h2 style={{
+                fontSize: '3rem',
+                fontWeight: 'bold',
+                color: '#17a2b8',
+                marginBottom: '0.5rem',
+                textShadow: '2px 2px 4px rgba(0,0,0,0.3)'
+              }}>
+                {problemStatements.length}
+              </h2>
+              <p style={{color: '#FFFFFF', fontSize: '1.1rem', margin: 0, fontWeight: 'bold'}}>
+                Problem Statements
+              </p>
             </div>
           </div>
-        </div>
-        <div className="col-md-4">
-          <div className="card border-0 shadow-sm bg-success text-white">
-            <div className="card-body text-center">
-              <h2 className="display-4 mb-0">{registrations.length}</h2>
-              <p className="mb-0">Team Registrations</p>
+          
+          <div className="col-md-4">
+            <div style={{
+              background: 'linear-gradient(145deg, rgba(40, 167, 69, 0.2), rgba(40, 167, 69, 0.1))',
+              backdropFilter: 'blur(15px)',
+              border: '2px solid rgba(40, 167, 69, 0.3)',
+              borderRadius: '20px',
+              padding: '2rem',
+              textAlign: 'center',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.3)'
+            }}>
+              <h2 style={{
+                fontSize: '3rem',
+                fontWeight: 'bold',
+                color: '#28a745',
+                marginBottom: '0.5rem',
+                textShadow: '2px 2px 4px rgba(0,0,0,0.3)'
+              }}>
+                {registrations.length}
+              </h2>
+              <p style={{color: '#FFFFFF', fontSize: '1.1rem', margin: 0, fontWeight: 'bold'}}>
+                Team Registrations
+              </p>
             </div>
           </div>
-        </div>
 
-        <div className="col-md-4">
-          <div className="card border-0 shadow-sm bg-danger text-white">
-            <div className="card-body text-center">
-              <h2 className="display-4 mb-0">
+          <div className="col-md-4">
+            <div style={{
+              background: 'linear-gradient(145deg, rgba(220, 53, 69, 0.2), rgba(220, 53, 69, 0.1))',
+              backdropFilter: 'blur(15px)',
+              border: '2px solid rgba(220, 53, 69, 0.3)',
+              borderRadius: '20px',
+              padding: '2rem',
+              textAlign: 'center',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.3)'
+            }}>
+              <h2 style={{
+                fontSize: '3rem',
+                fontWeight: 'bold',
+                color: '#dc3545',
+                marginBottom: '0.5rem',
+                textShadow: '2px 2px 4px rgba(0,0,0,0.3)'
+              }}>
                 {problemStatements.filter(problem => {
                   const registeredTeams = registrations.filter(r => 
                     r.problemTitle === problem.title || r.problemStatementId === problem.id
                   );
-                  return registeredTeams.length >= 2;
+                  return registeredTeams.length >= (problem.teamLimit || 2);
                 }).length}
               </h2>
-              <p className="mb-0">Full Problems</p>
+              <p style={{color: '#FFFFFF', fontSize: '1.1rem', margin: 0, fontWeight: 'bold'}}>
+                Full Problems
+              </p>
             </div>
           </div>
         </div>
-      </div>
 
       {/* ADD PROBLEM STATEMENT SECTION */}
       <div className="card mb-4 shadow-sm">
         <div className="card-header" style={{ backgroundColor: '#e3f2fd' }}>
           <div className="d-flex justify-content-between align-items-center">
             <h3 className="mb-0">🎯 Add New Problem Statement</h3>
-            <button
-              onClick={() => setShowAddForm(!showAddForm)}
-              className="btn btn-success"
-            >
-              {showAddForm ? '❌ Cancel' : '➕ Add Problem Statement'}
-            </button>
+            <div className="d-flex gap-2">
+              <button
+                onClick={syncCountersWithRegistrations}
+                className="btn btn-danger btn-sm"
+                disabled={migrating}
+                title="Sync counter display with actual registrations (fixes 3/2 issues)"
+              >
+                {migrating ? (
+                  <>
+                    <span className="spinner-border spinner-border-sm me-1" role="status"></span>
+                    Syncing...
+                  </>
+                ) : (
+                  '🔄 Fix Counts'
+                )}
+              </button>
+              <button
+                onClick={migrateExistingProblems}
+                className="btn btn-warning btn-sm"
+                disabled={migrating}
+                title="Add teamLimit field to existing problem statements that don't have it"
+              >
+                {migrating ? (
+                  <>
+                    <span className="spinner-border spinner-border-sm me-1" role="status"></span>
+                    Migrating...
+                  </>
+                ) : (
+                  '🔄 Fix Limits'
+                )}
+              </button>
+              <button
+                onClick={() => setShowAddForm(!showAddForm)}
+                className="btn btn-success"
+              >
+                {showAddForm ? '❌ Cancel' : '➕ Add Problem Statement'}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -521,12 +738,17 @@ const AdminDashboard = () => {
                     required
                   >
                     <option value="">Select...</option>
-                    {Array.from({length: 50}, (_, i) => i + 1).map(num => (
-                      <option key={num} value={num.toString()}>{num}</option>
-                    ))}
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="6">6</option>
+                    <option value="7">7</option>
+                    <option value="8">8</option>
                   </select>
                   <div className="form-text">
-                    Choose 1-50
+                    Choose 1-8
                   </div>
                 </div>
                 
@@ -546,7 +768,7 @@ const AdminDashboard = () => {
                   </div>
                 </div>
                 
-                <div className="col-md-12 mb-3">
+                <div className="col-md-10 mb-3">
                   <label className="form-label fw-bold">Problem Statement Description *</label>
                   <textarea
                     className="form-control"
@@ -559,6 +781,23 @@ const AdminDashboard = () => {
                   ></textarea>
                   <div className="form-text">
                     Characters: {newProblem.description.length}/500
+                  </div>
+                </div>
+                
+                <div className="col-md-2 mb-3">
+                  <label className="form-label fw-bold">Team Limit *</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    placeholder="Max teams"
+                    value={newProblem.teamLimit}
+                    onChange={(e) => setNewProblem(prev => ({...prev, teamLimit: parseInt(e.target.value) || 1}))}
+                    required
+                    min="1"
+                    max="20"
+                  />
+                  <div className="form-text">
+                    Max: 20 teams
                   </div>
                 </div>
                 
@@ -581,7 +820,7 @@ const AdminDashboard = () => {
                     type="button"
                     className="btn btn-secondary btn-lg"
                     onClick={() => {
-                      setNewProblem({ number: '', title: '', description: '' });
+                      setNewProblem({ number: '', title: '', description: '', teamLimit: 2 });
                       setShowAddForm(false);
                     }}
                   >
@@ -616,15 +855,15 @@ const AdminDashboard = () => {
                       <div className="card-body">
                         <div className="d-flex justify-content-between align-items-start mb-2">
                           <h6 className="card-title text-primary mb-1">
-                            {problem.number ? problem.number : index + 1}: {problem.title}
+                            Problem {problem.number ? problem.number : index + 1}: {problem.title}
                           </h6>
                           <div>
-                            {registeredTeams.length >= 2 ? (
+                            {registeredTeams.length >= (problem.teamLimit || 2) ? (
                               <span className="badge bg-danger">FULL</span>
                             ) : (
                               <span className="badge bg-success">ACTIVE</span>
                             )}
-                            <span className="badge bg-info ms-2">{registeredTeams.length}/2 Teams</span>
+                            <span className="badge bg-info ms-2">{registeredTeams.length}/{problem.teamLimit || 2} Teams</span>
                           </div>
                         </div>
                         <p className="card-text text-muted small mb-2">
@@ -700,7 +939,7 @@ const AdminDashboard = () => {
                       <td className="fw-bold">{index + 1}</td>
                       <td>
                         <span className="badge bg-primary fs-6">
-                          {formatTeamNumber(registration.teamNumber || registration.teamId)}
+                          {registration.teamNumber || registration.teamId}
                         </span>
                       </td>
                       <td>
@@ -718,12 +957,7 @@ const AdminDashboard = () => {
                       <td>
                         <div>
                           <strong className="text-success">
-                            🎯 {(() => {
-                              if (registration.problemNumber) {
-                                return `Problem Statement ${registration.problemNumber}: ${registration.problemTitle || 'Title not available'}`;
-                              }
-                              return registration.problemTitle || registration.problemStatementId || 'Not specified';
-                            })()}
+                            🎯 {registration.problemTitle || registration.problemStatementId || 'Not specified'}
                           </strong>
                           <br />
                           <small className="text-info">
@@ -774,6 +1008,11 @@ const AdminDashboard = () => {
               </table>
             </div>
           )}
+        </div>
+        
+        {/* Footer */}
+        <div className="text-center py-4" style={{color: '#CCCCCC', marginTop: '3rem'}}>
+          <p className="mb-0">DESIGNED AND DEVELOPED BY WEB DEV TEAM CYBERNERDS KARE</p>
         </div>
       </div>
     </div>

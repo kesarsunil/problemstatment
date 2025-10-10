@@ -1,1 +1,59 @@
-/* Custom styles if needed */
+/* TECHFRONTIER 2K25 Theme Styles */
+
+.nav-link-tech:hover {
+  background: rgba(255, 215, 0, 0.2) !important;
+  border-color: #FFD700 !important;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3);
+}
+
+/* Global Font Family */
+* {
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", "Helvetica Neue", Arial, sans-serif !important;
+}
+
+/* Custom Button Styles */
+.btn-techfrontier {
+  background: linear-gradient(45deg, #8B0000, #CD5C5C);
+  border: none;
+  color: white;
+  font-weight: bold;
+  border-radius: 25px;
+  padding: 12px 24px;
+  box-shadow: 0 4px 15px rgba(139, 0, 0, 0.3);
+  transition: all 0.3s ease;
+}
+
+.btn-techfrontier:hover {
+  background: linear-gradient(45deg, #CD5C5C, #8B0000);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(139, 0, 0, 0.4);
+  color: white;
+}
+
+/* Card Styles */
+.card-techfrontier {
+  background: linear-gradient(145deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 15px;
+  box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+}
+
+/* Text Styles */
+.text-techfrontier-primary {
+  color: #CD5C5C;
+  font-weight: bold;
+}
+
+.text-techfrontier-gold {
+  color: #FFD700;
+  font-weight: bold;
+}
+
+/* Back Button Hover Effect */
+.back-btn-hover:hover {
+  background-color: rgba(205, 92, 92, 0.1) !important;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(205, 92, 92, 0.3);
+}

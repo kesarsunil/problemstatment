@@ -183,125 +183,313 @@ const RegistrationForm = () => {
   };
 
   return (
-    <div className="row justify-content-center">
-      <div className="col-md-8 col-lg-6">
-        <div className="card shadow">
-          <div className="card-body p-4">
-            <h2 className="card-title text-center mb-4">🏆 Team Registration</h2>
-            
-            {/* 🚨 CRITICAL REGISTRATION WARNING */}
-            <div className="alert alert-warning border border-warning mb-4" role="alert">
-              <h5 className="alert-heading">⚠️ CRITICAL: ONE-TIME REGISTRATION ONLY</h5>
-              <p className="mb-1">
-                <strong>⛔ Each team can register for ONLY ONE problem statement!</strong>
-              </p>
-              <p className="mb-1">
-                <strong>🔒 Once you select a problem, you cannot change or return.</strong>
-              </p>
-              <p className="mb-0">
-                <strong>🎯 Choose your team carefully before proceeding!</strong>
-              </p>
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #8B0000 0%, #CD5C5C 30%, #8B0000 100%)',
+      padding: '2rem 0'
+    }}>
+      {/* Hero Section */}
+      <div className="container text-center py-5">
+        <h1 style={{
+          fontSize: 'clamp(2.5rem, 6vw, 4rem)',
+          fontWeight: 'bold',
+          color: '#FFFFFF',
+          textShadow: '3px 3px 6px rgba(0,0,0,0.5)',
+          letterSpacing: '2px',
+          marginBottom: '1rem'
+        }}>
+          TECHFRONTIER <span style={{color: '#FFD700'}}>2K25</span>
+        </h1>
+        
+        <p style={{
+          fontSize: '1.2rem',
+          color: '#E0E0E0',
+          marginBottom: '2rem'
+        }}>
+          Register Your Team for the Ultimate Hackathon Challenge
+        </p>
+
+        {/* Event Info Cards */}
+        <div className="row justify-content-center g-3 mb-5">
+          <div className="col-md-3">
+            <div style={{
+              backgroundColor: 'rgba(0,0,0,0.4)',
+              border: '2px solid #FF4444',
+              borderRadius: '15px',
+              padding: '1.5rem',
+              backdropFilter: 'blur(10px)'
+            }}>
+              <div style={{fontSize: '1.5rem', marginBottom: '0.5rem'}}>📅</div>
+              <h6 style={{color: '#FF6666', fontWeight: 'bold', marginBottom: '0.5rem'}}>DATE</h6>
+              <p style={{color: 'white', fontSize: '0.9rem', margin: 0}}>Oct 11-12, 2025</p>
             </div>
-            
-            <div className="alert alert-info text-center mb-4">
-              <strong>📋 All {REGISTERED_TEAMS.length} teams are loaded. Select your registered team from dropdown.</strong>
-            </div>
-            
-            <form onSubmit={handleSubmit}>
-              <div className="mb-3">
-                <label htmlFor="teamId" className="form-label">
-                  <i className="fas fa-users"></i> Select Your Team <span className="text-danger">*</span>
-                </label>
-                <select
-                  id="teamId"
-                  name="teamId"
-                  value={formData.teamId}
-                  onChange={handleChange}
-                  className={`form-control ${errors.teamId ? 'is-invalid' : ''}`}
-                >
-                  <option value="">-- Choose your team (ONE-TIME REGISTRATION) --</option>
-                  {REGISTERED_TEAMS.map(team => (
-                    <option key={team.teamId} value={team.teamId}>
-                      {team.teamId} - {team.teamName}
-                    </option>
-                  ))}
-                </select>
-                {errors.teamId && (
-                  <div className="invalid-feedback">{errors.teamId}</div>
-                )}
-              </div>
-
-              {formData.teamId && (
-                <>
-                  <div className="mb-3">
-                    <label htmlFor="teamName" className="form-label">
-                      <i className="fas fa-flag"></i> Team Name
-                    </label>
-                    <input
-                      type="text"
-                      id="teamName"
-                      name="teamName"
-                      value={formData.teamName}
-                      readOnly
-                      className="form-control bg-light"
-                      placeholder="Team name will auto-fill"
-                    />
-                  </div>
-
-                  <div className="mb-3">
-                    <label htmlFor="teamLeader" className="form-label">
-                      <i className="fas fa-crown"></i> Team Leader
-                    </label>
-                    <input
-                      type="text"
-                      id="teamLeader"
-                      name="teamLeader"
-                      value={formData.teamLeader}
-                      readOnly
-                      className="form-control bg-light"
-                      placeholder="Team leader will auto-fill"
-                    />
-                  </div>
-
-                  {/* 🛡️ FINAL CONFIRMATION WARNING */}
-                  <div className="alert alert-danger mb-4" role="alert">
-                    <h6 className="alert-heading">🔒 FINAL WARNING</h6>
-                    <p className="mb-1">
-                      You are about to proceed as <strong>{formData.teamName}</strong>.
-                    </p>
-                    <p className="mb-0">
-                      <strong>❌ This action CANNOT be undone. Your team will be LOCKED after registration.</strong>
-                    </p>
-                  </div>
-                </>
-              )}
-
-              <button
-                type="submit"
-                className="btn btn-danger w-100"
-                disabled={loading || !formData.teamId}
-                style={{ minHeight: '50px', fontSize: '1.1rem' }}
-              >
-                {loading ? (
-                  <>
-                    <span className="spinner-border spinner-border-sm me-2" role="status"></span>
-                    Processing Registration...
-                  </>
-                ) : (
-                  <>
-                    <i className="fas fa-lock me-2"></i>
-                    🚨 PROCEED TO PROBLEMS (ONE REGISTRATION ONLY) 🚨
-                  </>
-                )}
-              </button>
-              
-              {!formData.teamId && (
-                <small className="text-muted d-block text-center mt-3">
-                  Please select your team to continue
-                </small>
-              )}
-            </form>
           </div>
+          <div className="col-md-3">
+            <div style={{
+              backgroundColor: 'rgba(0,0,0,0.4)',
+              border: '2px solid #FF4444',
+              borderRadius: '15px',
+              padding: '1.5rem',
+              backdropFilter: 'blur(10px)'
+            }}>
+              <div style={{fontSize: '1.5rem', marginBottom: '0.5rem'}}>⏰</div>
+              <h6 style={{color: '#FF6666', fontWeight: 'bold', marginBottom: '0.5rem'}}>DURATION</h6>
+              <p style={{color: 'white', fontSize: '0.9rem', margin: 0}}>24 Hours</p>
+            </div>
+          </div>
+          <div className="col-md-3">
+            <div style={{
+              backgroundColor: 'rgba(0,0,0,0.4)',
+              border: '2px solid #FF4444',
+              borderRadius: '15px',
+              padding: '1.5rem',
+              backdropFilter: 'blur(10px)'
+            }}>
+              <div style={{fontSize: '1.5rem', marginBottom: '0.5rem'}}>🏆</div>
+              <h6 style={{color: '#FF6666', fontWeight: 'bold', marginBottom: '0.5rem'}}>PRIZE</h6>
+              <p style={{color: 'white', fontSize: '0.9rem', margin: 0}}>₹20,000</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Registration Form */}
+      <div className="container">
+        <div className="row justify-content-center">
+          <div className="col-md-8 col-lg-6">
+            <div style={{
+              backgroundColor: 'rgba(0,0,0,0.7)',
+              backdropFilter: 'blur(15px)',
+              border: '2px solid rgba(205, 92, 92, 0.3)',
+              borderRadius: '20px',
+              padding: '2rem',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.3)'
+            }}>
+              <h2 style={{
+                textAlign: 'center',
+                marginBottom: '2rem',
+                color: '#FFFFFF',
+                fontSize: '2rem',
+                fontWeight: 'bold'
+              }}>
+                🏆 Team Registration
+              </h2>
+            
+              {/* CRITICAL REGISTRATION WARNING */}
+              <div style={{
+                backgroundColor: 'rgba(255, 193, 7, 0.2)',
+                border: '2px solid #FFC107',
+                borderRadius: '15px',
+                padding: '1.5rem',
+                marginBottom: '2rem',
+                backdropFilter: 'blur(10px)'
+              }}>
+                <h5 style={{color: '#FFD700', fontWeight: 'bold', marginBottom: '1rem'}}>
+                  ⚠️ CRITICAL: ONE-TIME REGISTRATION ONLY
+                </h5>
+                <p style={{color: '#FFFFFF', marginBottom: '0.5rem'}}>
+                  <strong>⛔ Each team can register for ONLY ONE problem statement!</strong>
+                </p>
+                <p style={{color: '#FFFFFF', marginBottom: '0.5rem'}}>
+                  <strong>🔒 Once you select a problem, you cannot change or return.</strong>
+                </p>
+                <p style={{color: '#FFFFFF', marginBottom: '0'}}>
+                  <strong>🎯 Choose your team carefully before proceeding!</strong>
+                </p>
+              </div>
+              
+              <div style={{
+                backgroundColor: 'rgba(23, 162, 184, 0.2)',
+                border: '2px solid #17A2B8',
+                borderRadius: '15px',
+                padding: '1rem',
+                marginBottom: '2rem',
+                textAlign: 'center',
+                backdropFilter: 'blur(10px)'
+              }}>
+                <strong style={{color: '#FFFFFF'}}>
+                  📋 All {REGISTERED_TEAMS.length} teams are loaded. Select your registered team from dropdown.
+                </strong>
+              </div>
+            
+              <form onSubmit={handleSubmit}>
+                <div className="mb-4">
+                  <label htmlFor="teamId" style={{
+                    color: '#FFFFFF',
+                    fontWeight: 'bold',
+                    marginBottom: '0.5rem',
+                    display: 'block'
+                  }}>
+                    <i className="fas fa-users"></i> Select Your Team <span style={{color: '#FF6B6B'}}>*</span>
+                  </label>
+                  <select
+                    id="teamId"
+                    name="teamId"
+                    value={formData.teamId}
+                    onChange={handleChange}
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      borderRadius: '10px',
+                      border: errors.teamId ? '2px solid #FF6B6B' : '2px solid rgba(205, 92, 92, 0.5)',
+                      backgroundColor: 'rgba(255,255,255,0.1)',
+                      color: '#FFFFFF',
+                      fontSize: '1rem',
+                      backdropFilter: 'blur(10px)',
+                      outline: 'none'
+                    }}
+                  >
+                    <option value="" style={{backgroundColor: '#333', color: '#fff'}}>
+                      -- Choose your team (ONE-TIME REGISTRATION) --
+                    </option>
+                    {REGISTERED_TEAMS.map(team => (
+                      <option key={team.teamId} value={team.teamId} style={{backgroundColor: '#333', color: '#fff'}}>
+                        {team.teamId} - {team.teamName}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.teamId && (
+                    <div style={{color: '#FF6B6B', fontSize: '0.875rem', marginTop: '0.5rem'}}>
+                      {errors.teamId}
+                    </div>
+                  )}
+                </div>
+
+                {formData.teamId && (
+                  <>
+                    <div className="mb-4">
+                      <label htmlFor="teamName" style={{
+                        color: '#FFFFFF',
+                        fontWeight: 'bold',
+                        marginBottom: '0.5rem',
+                        display: 'block'
+                      }}>
+                        <i className="fas fa-flag"></i> Team Name
+                      </label>
+                      <input
+                        type="text"
+                        id="teamName"
+                        name="teamName"
+                        value={formData.teamName}
+                        readOnly
+                        style={{
+                          width: '100%',
+                          padding: '12px 16px',
+                          borderRadius: '10px',
+                          border: '2px solid rgba(40, 167, 69, 0.5)',
+                          backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                          color: '#FFFFFF',
+                          fontSize: '1rem',
+                          backdropFilter: 'blur(10px)',
+                          outline: 'none'
+                        }}
+                        placeholder="Team name will auto-fill"
+                      />
+                    </div>
+
+                    <div className="mb-4">
+                      <label htmlFor="teamLeader" style={{
+                        color: '#FFFFFF',
+                        fontWeight: 'bold',
+                        marginBottom: '0.5rem',
+                        display: 'block'
+                      }}>
+                        <i className="fas fa-crown"></i> Team Leader
+                      </label>
+                      <input
+                        type="text"
+                        id="teamLeader"
+                        name="teamLeader"
+                        value={formData.teamLeader}
+                        readOnly
+                        style={{
+                          width: '100%',
+                          padding: '12px 16px',
+                          borderRadius: '10px',
+                          border: '2px solid rgba(40, 167, 69, 0.5)',
+                          backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                          color: '#FFFFFF',
+                          fontSize: '1rem',
+                          backdropFilter: 'blur(10px)',
+                          outline: 'none'
+                        }}
+                        placeholder="Team leader will auto-fill"
+                      />
+                    </div>
+
+                    {/* FINAL CONFIRMATION WARNING */}
+                    <div style={{
+                      backgroundColor: 'rgba(220, 53, 69, 0.2)',
+                      border: '2px solid #DC3545',
+                      borderRadius: '15px',
+                      padding: '1.5rem',
+                      marginBottom: '2rem',
+                      backdropFilter: 'blur(10px)'
+                    }}>
+                      <h6 style={{color: '#FF6B6B', fontWeight: 'bold', marginBottom: '1rem'}}>
+                        🔒 FINAL WARNING
+                      </h6>
+                      <p style={{color: '#FFFFFF', marginBottom: '0.5rem'}}>
+                        You are about to proceed as <strong>{formData.teamName}</strong>.
+                      </p>
+                      <p style={{color: '#FFFFFF', marginBottom: '0'}}>
+                        <strong>❌ This action CANNOT be undone. Your team will be LOCKED after registration.</strong>
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading || !formData.teamId}
+                  style={{
+                    width: '100%',
+                    minHeight: '60px',
+                    fontSize: '1.2rem',
+                    fontWeight: 'bold',
+                    borderRadius: '15px',
+                    border: 'none',
+                    background: loading || !formData.teamId 
+                      ? 'linear-gradient(45deg, #6c757d, #495057)' 
+                      : 'linear-gradient(45deg, #DC3545, #B02A37)',
+                    color: '#FFFFFF',
+                    cursor: loading || !formData.teamId ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.3s ease',
+                    boxShadow: '0 4px 15px rgba(220, 53, 69, 0.3)',
+                    textShadow: '1px 1px 2px rgba(0,0,0,0.3)'
+                  }}
+                >
+                  {loading ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                      Processing Registration...
+                    </>
+                  ) : (
+                    <>
+                      <i className="fas fa-lock me-2"></i>
+                      🚨 PROCEED TO PROBLEMS (ONE REGISTRATION ONLY) 🚨
+                    </>
+                  )}
+                </button>
+                
+                {!formData.teamId && (
+                  <div style={{
+                    color: '#CCCCCC',
+                    fontSize: '0.9rem',
+                    textAlign: 'center',
+                    marginTop: '1rem'
+                  }}>
+                    Please select your team to continue
+                  </div>
+                )}
+              </form>
+            </div>
+          </div>
+        </div>
+        
+        {/* Footer */}
+        <div className="text-center py-4" style={{color: '#CCCCCC', marginTop: '3rem'}}>
+          <p className="mb-0">DESIGNED AND DEVELOPED BY WEB DEV TEAM CYBERNERDS KARE</p>
         </div>
       </div>
     </div>
